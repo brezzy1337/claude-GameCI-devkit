@@ -1,0 +1,132 @@
+# WebGL deploy — from claude-unity-devkit templates/deploy/deploy-webgl.yml.
+# Builds the WebGL player, then ships it to a DigitalOcean Droplet running nginx as a versioned
+# release (deploy/deploy.sh) and swaps the `current` symlink nginx serves from. No restart needed.
+#
+# Required repository secrets:
+#   UNITY_LICENSE, UNITY_EMAIL, UNITY_PASSWORD   (same as build.yml; Pro: UNITY_SERIAL)
+#   DEPLOY_SSH_KEY       private key of the deploy user (ed25519, no passphrase)
+#   DEPLOY_KNOWN_HOSTS   output of `ssh-keyscan -t ed25519 <droplet-ip>` run from a trusted network
+#   DEPLOY_HOST          Droplet IP or hostname
+#   DEPLOY_USER          deploy user on the Droplet
+# Optional repository variable:
+#   DEPLOY_PORT          SSH port (defaults to 22)
+#
+# The deploy job runs in the `production` environment: add required reviewers under
+# Settings -> Environments -> production to make every deploy wait for a human approval.
+name: Deploy WebGL
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-webgl
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # TAILOR(projectPath): folder that holds Assets/ — "." when the Unity project is the repo root.
+  UNITY_PROJECT_PATH: .
+  BUILD_NAME: WebGL
+
+jobs:
+  build:
+    name: Build WebGL
+    runs-on: ubuntu-latest # TAILOR(runner)
+    timeout-minutes: 90
+    steps:
+      # The WebGL editor image (~7.5 GB compressed) crowds a GitHub-hosted runner's 14 GB SSD.
+      # Delete this step on self-hosted runners.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          df -h /
+
+      - name: Checkout (with LFS, full history for Semantic versioning)
+        uses: actions/checkout@v7
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Cache Library
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.UNITY_PROJECT_PATH }}/Library
+          # Same key family as build.yml's WebGL entry, so the two workflows share a cache.
+          key: Library-build-WebGL-${{ hashFiles('Packages/manifest.json', 'Packages/packages-lock.json', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-build-WebGL-
+
+      - name: Build WebGL
+        uses: game-ci/unity-builder@v5
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          # UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          projectPath: ${{ env.UNITY_PROJECT_PATH }}
+          targetPlatform: WebGL
+          buildName: ${{ env.BUILD_NAME }}
+          versioning: Semantic
+
+      - name: Archive build
+        run: tar -czf WebGL.tar.gz -C "build/WebGL/${BUILD_NAME}" .
+
+      - name: Upload build
+        uses: actions/upload-artifact@v7
+        with:
+          name: WebGL
+          path: WebGL.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy:
+    name: Deploy to Droplet
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - name: Checkout deploy scripts
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: deploy
+
+      - name: Download build
+        uses: actions/download-artifact@v8
+        with:
+          name: WebGL
+          path: dist
+
+      - name: Unpack build
+        run: |
+          mkdir -p dist/webgl
+          tar -xzf dist/WebGL.tar.gz -C dist/webgl
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
+
+      - name: Deploy release
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+          DEPLOY_ROOT: /var/www/unity-webgl # TAILOR: must match nginx `root .../current`
+          SSH_KEY_PATH: ${{ runner.temp }}/deploy_key
+          SSH_KNOWN_HOSTS_PATH: ${{ runner.temp }}/known_hosts
+        run: bash deploy/deploy.sh webgl dist/webgl "${GITHUB_REF_NAME}-${GITHUB_SHA::7}"
+
+      - name: Remove SSH key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/deploy_key"

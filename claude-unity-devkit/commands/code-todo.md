@@ -1,0 +1,68 @@
+---
+description: Implement a Unity feature/change via domain-routed sub-agents, review the diff on Slack, then hand the approved branch to /claude-unity-devkit:ship
+argument-hint: [feature or change to implement]
+allowed-tools: Bash(git status *), Bash(git diff *), Bash(git branch *), Bash(git switch *), Bash(git checkout *), Bash(git add *), Bash(git commit *), Bash(git merge-base *), Bash(dotnet format *), Bash(*/scripts/format-csharp.sh*), Bash(*/scripts/check-meta-files.sh*), Bash(gh pr view *), Bash(gh run list *), Bash(gh run view *), Read, Grep, Glob
+---
+
+# Code-todo
+
+Context (gathered for you):
+- Branch: !`git branch --show-current`
+- Status: !`git status --short`
+
+Implement the change described in $ARGUMENTS. You (the central thread) own the chain — the
+specialists have no `Agent` tool, so they never delegate further — so you route the work, brief each
+agent fully, manage all git state, and do the handoff yourself.
+
+1. **Read the request.** Treat $ARGUMENTS (and any linked issue or `@file`) as the change to make.
+   If the scope is unclear, ask me before routing — an implementer starts with a fresh context and
+   can't ask follow-ups.
+
+2. **Determine the domain(s).** Match the change against the **Domain boundaries** in CLAUDE.md
+   (the subagent-orchestration baseline — in a Unity repo these are the `.asmdef` folders). One
+   domain → one implementer. Multiple domains with non-overlapping globs → implementers in parallel.
+   Dependent domains (a referenced assembly before the assemblies that use it, e.g. Core → Gameplay
+   → UI) → a sequential chain you drive, handing each step's output to the next. Changes to
+   `ProjectSettings/`, `Packages/manifest.json`, or shared scenes/prefabs are single-owner and
+   sequential — never split them across parallel agents. When unsure, go sequential. If CLAUDE.md
+   has no Domain boundaries, ask me which paths the change touches — do not guess globs.
+
+3. **Prepare the branch.** Create or switch to a feature branch for this change (match the repo's
+   branch convention). Implementers edit on it; only you commit.
+
+4. **Dispatch implementer(s).** For each slice, invoke the `implementer` sub-agent with the
+   baseline's four-part brief — context, instructions, exact file references, and success criteria
+   — and name the domain's globs plus the repo's verify commands (format check, meta check, and the
+   Unity test command from CLAUDE.md, or "tests run in GameCI" if no local Editor is configured). If a
+   slice needs a new or bumped package, route it through the `dependency-auditor` sub-agent first and
+   stop on a NO-GO. Stop on red: if implementation or tests fail and can't be fixed, halt and report.
+
+5. **Gameplay iteration (runtime gameplay slices only).** Gameplay rarely lands in one pass — close
+   the loop yourself BEFORE the human gate. If the slice touched runtime gameplay code (the gameplay
+   domain globs in CLAUDE.md):
+   - Dispatch BOTH lenses in parallel on the diff: `gameplay-reviewer` (frame-rate independence,
+     Fixed vs Update timing, input, state transitions, null-safety) and `performance-reviewer`
+     (hot-path allocations, per-frame lookups, physics and batching costs).
+   - Re-brief the implementer on every Critical and Warning finding and re-run the lenses until both
+     verdicts are clean (cap at two fix cycles — if still red, surface the remaining findings at the
+     gate instead of looping forever).
+
+6. **Verify, commit, then review on Slack — GATE.** Once the slices are in:
+   - Run the format check (`"${CLAUDE_PLUGIN_ROOT}/scripts/format-csharp.sh" --check`) and the meta
+     check (`"${CLAUDE_PLUGIN_ROOT}/scripts/check-meta-files.sh"`); every new asset must have its
+     `.meta` before you commit. Collect every implementer's **Editor follow-ups**.
+   - Commit the work to the branch. Run `git diff` against the base, summarize what changed (code vs
+     asset/scene changes, plus any Editor follow-ups a human must do), and delegate to `slack-notifier`
+     (transition `CHANGE_READY`) to post the summary + branch name to the team thread.
+   - Then STOP and wait for my explicit "yes" here in the terminal. Slack is where I read the diff; I
+     approve back in this session — do not poll Slack for a reply. If I request changes, re-brief the
+     implementer, update the branch, and re-post. If Slack isn't connected, show the summary here and
+     wait for my approval in the terminal.
+
+7. **Hand off to ship.** Only after I approve: run `/claude-unity-devkit:ship` on this branch. Ship owns
+   PR creation, the multi-lens review panel, the CI check gate, the merge gate, and PR notifications —
+   do NOT open a PR, push, or merge here (those tools are intentionally not available to this
+   command). If ship isn't available, stop and tell me the branch is ready to open a PR by hand.
+
+Never work around the review gate, a red step, or a dependency NO-GO to move faster. If something
+blocks, stop and tell me with the reason.

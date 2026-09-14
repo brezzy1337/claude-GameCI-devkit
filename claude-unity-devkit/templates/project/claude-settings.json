@@ -1,0 +1,10 @@
+{
+  "extraKnownMarketplaces": {
+    "claude-unity-devkit": {
+      "source": { "source": "github", "repo": "__MARKETPLACE_REPO__" }
+    }
+  },
+  "enabledPlugins": {
+    "claude-unity-devkit@claude-unity-devkit": true
+  }
+}

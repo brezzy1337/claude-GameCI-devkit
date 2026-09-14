@@ -1,0 +1,52 @@
+# systemd unit for a Unity Linux dedicated server build.
+# From claude-unity-devkit templates/deploy/unity-server.service.
+#
+# Install on the Droplet (once):
+#   sudo cp unity-server.service /etc/systemd/system/unity-server.service
+#   sudo systemctl daemon-reload && sudo systemctl enable unity-server
+# deploy.sh swaps /srv/unity-server/current to each new release and restarts this unit.
+# Logs: journalctl -u unity-server -f
+
+[Unit]
+Description=Unity dedicated server
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=unity
+Group=unity
+WorkingDirectory=/srv/unity-server/current
+# -batchmode -nographics: headless, no GPU. -logFile -: Unity log to stdout, captured by journald.
+# Everything after that is read by YOUR server bootstrap (System.Environment.GetCommandLineArgs);
+# -port is an example — delete it if your transport reads its port elsewhere.
+ExecStart=/srv/unity-server/current/Server.x86_64 -batchmode -nographics -logFile - -port 7777
+# Optional KEY=value settings (secrets, region, max players). Keep it root:unity, mode 0640.
+EnvironmentFile=-/etc/unity-server.env
+# Application.persistentDataPath resolves under $HOME/.config/unity3d/<Company>/<Product>.
+Environment=HOME=/var/lib/unity-server
+StateDirectory=unity-server
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+LimitNOFILE=65536
+
+# Hardening. Do NOT add MemoryDenyWriteExecute=true: the Mono scripting backend JIT-compiles
+# and will crash under it (IL2CPP builds tolerate it — test before enabling).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/srv/unity-server/shared
+
+[Install]
+WantedBy=multi-user.target

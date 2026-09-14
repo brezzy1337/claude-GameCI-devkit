@@ -1,0 +1,17 @@
+{
+  "name": "claude-unity-devkit",
+  "owner": {
+    "name": "Devin Phat",
+    "email": "devin.phat97@gmail.com"
+  },
+  "description": "Marketplace hosting the claude-unity-devkit plugin for Unity / C# game projects.",
+  "plugins": [
+    {
+      "name": "claude-unity-devkit",
+      "source": "./claude-unity-devkit",
+      "description": "Workflow skills, agents, and commands for Unity / C# game development: subagent orchestration, code-todo handoffs, a ship workflow, GameCI pipelines, and Droplet deploys.",
+      "version": "0.1.0",
+      "keywords": ["unity", "csharp", "gamedev", "gameci", "ci-cd", "subagents", "workflow"]
+    }
+  ]
+}

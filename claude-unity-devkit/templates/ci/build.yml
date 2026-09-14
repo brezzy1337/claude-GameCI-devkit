@@ -1,0 +1,128 @@
+# GameCI build workflow — from claude-unity-devkit templates/ci/build.yml.
+# Builds a matrix of targets with game-ci/unity-builder and uploads each as a .tar.gz artifact
+# (tar keeps the executable bit, which upload-artifact alone drops).
+#
+# Required repository secrets (Personal license):
+#   UNITY_LICENSE   full contents of Unity_lic.ulf
+#   UNITY_EMAIL     Unity account email
+#   UNITY_PASSWORD  Unity account password
+# Pro / Plus license: add UNITY_SERIAL and swap it in for UNITY_LICENSE below.
+#
+# Builds run on pushes to the default branch, on version tags, and on demand. Pull requests run
+# test.yml only; add `pull_request:` below if you also want every PR built.
+#
+# TAILOR markers: /claude-unity-devkit:setup-ci rewrites these; edit by hand otherwise.
+name: Build
+
+on:
+  push:
+    branches: [main] # TAILOR(branch): the repo's default branch
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # TAILOR(projectPath): folder that holds Assets/ — "." when the Unity project is the repo root.
+  UNITY_PROJECT_PATH: .
+
+jobs:
+  build:
+    name: Build ${{ matrix.artifactName }}
+    runs-on: ubuntu-latest # TAILOR(runner): e.g. [self-hosted, linux, x64, unity]
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      # TAILOR(targets): keep only the targets this project ships.
+      matrix:
+        include:
+          # Headless Linux dedicated server. unity-builder uses the linux-il2cpp editor image for
+          # StandaloneLinux64, which is the GameCI image that ships the linux-server module.
+          - targetPlatform: StandaloneLinux64
+            artifactName: LinuxServer
+            buildName: Server
+            customParameters: -standaloneBuildSubtarget Server
+          - targetPlatform: WebGL
+            artifactName: WebGL
+            buildName: WebGL
+            customParameters: ''
+          - targetPlatform: StandaloneLinux64
+            artifactName: Linux
+            buildName: Game
+            customParameters: ''
+          - targetPlatform: StandaloneWindows64
+            artifactName: Windows
+            buildName: Game
+            customParameters: ''
+          - targetPlatform: Android
+            artifactName: Android
+            buildName: Game
+            customParameters: ''
+    steps:
+      # The Android (~8.6 GB compressed) and WebGL (~7.5 GB) editor images are the largest GameCI
+      # images; GitHub-hosted runners (14 GB SSD) run out of disk pulling them unless preinstalled
+      # toolchains are removed first. Delete this step on self-hosted runners.
+      - name: Free disk space
+        if: matrix.targetPlatform == 'Android' || matrix.targetPlatform == 'WebGL'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          df -h /
+
+      - name: Checkout (with LFS, full history for Semantic versioning)
+        uses: actions/checkout@v7
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      # One Library per target: switching build target re-imports assets, so targets must not
+      # share a cache entry.
+      - name: Cache Library
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.UNITY_PROJECT_PATH }}/Library
+          # TAILOR(projectPath): prefix these globs with the project folder when it isn't the root.
+          key: Library-build-${{ matrix.artifactName }}-${{ hashFiles('Packages/manifest.json', 'Packages/packages-lock.json', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-build-${{ matrix.artifactName }}-
+
+      - name: Build ${{ matrix.artifactName }}
+        id: build
+        uses: game-ci/unity-builder@v5
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          # Pro / Plus license — use the serial instead of UNITY_LICENSE:
+          # UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          projectPath: ${{ env.UNITY_PROJECT_PATH }}
+          targetPlatform: ${{ matrix.targetPlatform }}
+          buildName: ${{ matrix.buildName }}
+          customParameters: ${{ matrix.customParameters }}
+          versioning: Semantic
+          # Signed Android release builds (only read when targetPlatform is Android):
+          # androidExportType: androidAppBundle
+          # androidKeystoreName: user.keystore
+          # androidKeystoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          # androidKeystorePass: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          # androidKeyaliasName: ${{ secrets.ANDROID_KEYALIAS_NAME }}
+          # androidKeyaliasPass: ${{ secrets.ANDROID_KEYALIAS_PASS }}
+
+      - name: Archive build
+        run: |
+          tar -czf "${{ matrix.artifactName }}.tar.gz" -C "build/${{ matrix.targetPlatform }}" .
+          echo "Built ${{ matrix.artifactName }} version ${{ steps.build.outputs.buildVersion }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload build
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifactName }}
+          path: ${{ matrix.artifactName }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,128 @@
+# Dedicated-server deploy — from claude-unity-devkit templates/deploy/deploy-server.yml.
+# Builds the Linux dedicated server, then ships it to a DigitalOcean Droplet as a versioned
+# release (deploy/deploy.sh), swaps the `current` symlink, and restarts the systemd service.
+# A failed health check rolls back to the previous release automatically.
+#
+# Required repository secrets:
+#   UNITY_LICENSE, UNITY_EMAIL, UNITY_PASSWORD   (same as build.yml; Pro: UNITY_SERIAL)
+#   DEPLOY_SSH_KEY       private key of the deploy user (ed25519, no passphrase)
+#   DEPLOY_KNOWN_HOSTS   output of `ssh-keyscan -t ed25519 <droplet-ip>` run from a trusted network
+#   DEPLOY_HOST          Droplet IP or hostname
+#   DEPLOY_USER          deploy user on the Droplet
+# Optional repository variable:
+#   DEPLOY_PORT          SSH port (defaults to 22)
+#
+# The deploy job runs in the `production` environment: add required reviewers under
+# Settings -> Environments -> production to make every deploy wait for a human approval.
+name: Deploy server
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # TAILOR(projectPath): folder that holds Assets/ — "." when the Unity project is the repo root.
+  UNITY_PROJECT_PATH: .
+  BUILD_NAME: Server # TAILOR: must match SERVER_BINARY (<BUILD_NAME>.x86_64) and the systemd unit
+
+jobs:
+  build:
+    name: Build Linux server
+    runs-on: ubuntu-latest # TAILOR(runner)
+    timeout-minutes: 90
+    steps:
+      - name: Checkout (with LFS, full history for Semantic versioning)
+        uses: actions/checkout@v7
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Cache Library
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.UNITY_PROJECT_PATH }}/Library
+          # Same key family as build.yml's LinuxServer entry, so the two workflows share a cache.
+          key: Library-build-LinuxServer-${{ hashFiles('Packages/manifest.json', 'Packages/packages-lock.json', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-build-LinuxServer-
+
+      - name: Build dedicated server
+        uses: game-ci/unity-builder@v5
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          # UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          projectPath: ${{ env.UNITY_PROJECT_PATH }}
+          targetPlatform: StandaloneLinux64
+          buildName: ${{ env.BUILD_NAME }}
+          customParameters: -standaloneBuildSubtarget Server
+          versioning: Semantic
+
+      - name: Archive build (keeps the executable bit)
+        run: tar -czf LinuxServer.tar.gz -C build/StandaloneLinux64 .
+
+      - name: Upload build
+        uses: actions/upload-artifact@v7
+        with:
+          name: LinuxServer
+          path: LinuxServer.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy:
+    name: Deploy to Droplet
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - name: Checkout deploy scripts
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: deploy
+
+      - name: Download build
+        uses: actions/download-artifact@v8
+        with:
+          name: LinuxServer
+          path: dist
+
+      - name: Unpack build
+        run: |
+          mkdir -p dist/server
+          tar -xzf dist/LinuxServer.tar.gz -C dist/server
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
+
+      - name: Deploy release
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+          DEPLOY_ROOT: /srv/unity-server # TAILOR: must match the systemd unit's paths
+          SERVICE_NAME: unity-server # TAILOR
+          SERVER_BINARY: ${{ env.BUILD_NAME }}.x86_64
+          SSH_KEY_PATH: ${{ runner.temp }}/deploy_key
+          SSH_KNOWN_HOSTS_PATH: ${{ runner.temp }}/known_hosts
+        run: bash deploy/deploy.sh server dist/server "${GITHUB_REF_NAME}-${GITHUB_SHA::7}"
+
+      - name: Remove SSH key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/deploy_key"

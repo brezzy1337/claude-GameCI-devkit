@@ -1,0 +1,93 @@
+# GameCI test workflow — from claude-unity-devkit templates/ci/test.yml.
+# Runs EditMode + PlayMode tests with game-ci/unity-test-runner on every pull request and on
+# pushes to the default branch.
+#
+# Required repository secrets (Personal license):
+#   UNITY_LICENSE   full contents of Unity_lic.ulf
+#   UNITY_EMAIL     Unity account email
+#   UNITY_PASSWORD  Unity account password
+# Pro / Plus license: add UNITY_SERIAL and swap it in for UNITY_LICENSE below.
+#
+# TAILOR markers: /claude-unity-devkit:setup-ci rewrites these; edit by hand otherwise.
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main] # TAILOR(branch): the repo's default branch
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write # unity-test-runner publishes a check run with the results
+
+env:
+  # TAILOR(projectPath): folder that holds Assets/ — "." when the Unity project is the repo root.
+  UNITY_PROJECT_PATH: .
+
+jobs:
+  test:
+    name: Test (${{ matrix.testMode }})
+    # Secrets are not passed to pull requests from forks, so license activation would fail there.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest # TAILOR(runner): e.g. [self-hosted, linux, x64, unity]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        testMode: [editmode, playmode]
+    steps:
+      - name: Checkout (with LFS)
+        uses: actions/checkout@v7
+        with:
+          lfs: true
+
+      # Library is keyed on what invalidates most of it (packages + project settings), per test
+      # mode. restore-keys fall back to the newest Library so unchanged assets skip re-import.
+      - name: Cache Library
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.UNITY_PROJECT_PATH }}/Library
+          # TAILOR(projectPath): prefix these globs with the project folder when it isn't the root.
+          key: Library-test-${{ matrix.testMode }}-${{ hashFiles('Packages/manifest.json', 'Packages/packages-lock.json', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-test-${{ matrix.testMode }}-
+            Library-test-
+
+      - name: Run ${{ matrix.testMode }} tests
+        id: tests
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          # Pro / Plus license — use the serial instead of UNITY_LICENSE:
+          # UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          projectPath: ${{ env.UNITY_PROJECT_PATH }}
+          testMode: ${{ matrix.testMode }}
+          artifactsPath: ${{ matrix.testMode }}-artifacts
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+          checkName: ${{ matrix.testMode }} test results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.testMode }}
+          path: ${{ steps.tests.outputs.artifactsPath || format('{0}-artifacts', matrix.testMode) }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-${{ matrix.testMode }}
+          path: ${{ steps.tests.outputs.coveragePath || 'CodeCoverage' }}
+          if-no-files-found: ignore
+          retention-days: 14
