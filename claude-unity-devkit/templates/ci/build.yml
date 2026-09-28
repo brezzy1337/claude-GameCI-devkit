@@ -2,11 +2,13 @@
 # Builds a matrix of targets with game-ci/unity-builder and uploads each as a .tar.gz artifact
 # (tar keeps the executable bit, which upload-artifact alone drops).
 #
-# Required repository secrets (Personal license):
-#   UNITY_LICENSE   full contents of Unity_lic.ulf
+# Required repository secrets:
+#   UNITY_SERIAL    Pro / Plus serial -- or UNITY_LICENSE: the full contents of a legacy portable
+#                   Unity_lic.ulf (Personal). New Personal activations don't produce one and offline
+#                   activation is Enterprise/Industry only; see the gameci-pipeline skill.
 #   UNITY_EMAIL     Unity account email
 #   UNITY_PASSWORD  Unity account password
-# Pro / Plus license: add UNITY_SERIAL and swap it in for UNITY_LICENSE below.
+# The license env lines below default to UNITY_LICENSE; /setup-ci swaps in UNITY_SERIAL for Pro/Plus.
 #
 # Builds run on pushes to the default branch, on version tags, and on demand. Pull requests run
 # test.yml only; add `pull_request:` below if you also want every PR built.

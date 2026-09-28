@@ -4,7 +4,9 @@ description: >-
   Author GitHub Actions CI for a Unity project with GameCI — game-ci/unity-test-runner for EditMode
   and PlayMode tests, game-ci/unity-builder for a build-target matrix (WebGL, StandaloneLinux64
   including the dedicated-server subtarget, StandaloneWindows64, Android), license activation through
-  UNITY_LICENSE or UNITY_SERIAL plus UNITY_EMAIL and UNITY_PASSWORD secrets, Library caching keyed on
+  UNITY_SERIAL (Pro/Plus), a license server, or a legacy Personal UNITY_LICENSE file, plus UNITY_EMAIL
+  and UNITY_PASSWORD secrets — and why new Unity Personal licenses can't activate in GameCI (offline
+  activation is Enterprise/Industry only), with the alternatives. Library caching keyed on
   Packages/manifest.json and ProjectSettings, and GitHub-hosted or self-hosted runner labels. Use this
   skill whenever the user wants to set up, fix, speed up, or review CI for a Unity game, add build
   targets, activate a Unity license in GitHub Actions, or debug a failing GameCI job (activation
@@ -64,7 +66,11 @@ supply-chain posture, pin every action to a full commit SHA and let Dependabot b
   must list a `-3` tag for each module the targets need (`base`, `webgl`, `linux-il2cpp`,
   `windows-mono`, `android`). Images appear a few days after a Unity release.
 - **Git LFS** — does `.gitattributes` use `filter=lfs`? Then checkout needs `lfs: true`.
-- **Targets, runners, license type, default branch** — ask; don't guess.
+- **Targets, runners, license type, default branch** — ask; don't guess. If CLAUDE.md records a
+  branch model (`unity-project-conventions/references/branching.md`), trigger tests on PRs into the
+  integration branch (`stable`) and builds on pushes to it and on `v*` tags.
+- **Unity CLI first?** Teams standardizing on the Unity CLI use the `unity-init` skill's
+  `unity test` / `unity build` workflow instead; GameCI is the fallback when the CLI can't do a job.
 - **Existing workflows** — read them; extend or replace deliberately, never duplicate a job.
 
 ## Step 2 — License activation
@@ -72,16 +78,42 @@ supply-chain posture, pin every action to a full commit SHA and let Dependabot b
 Secrets go on the GameCI **steps** as `env:` — not at workflow or job level, never echoed, never
 interpolated into `run:` scripts.
 
-- **Personal** (the devkit default): `UNITY_LICENSE` = the full contents of the `.ulf` file, plus
-  `UNITY_EMAIL` and `UNITY_PASSWORD`. To get the file: Unity Hub → Preferences → Licenses → Add →
-  *Get a free personal license*. It lands at `C:\ProgramData\Unity\Unity_lic.ulf` (Windows),
-  `/Library/Application Support/Unity/Unity_lic.ulf` (macOS), or
-  `~/.local/share/unity3d/Unity/Unity_lic.ulf` (Linux). A license shown in Hub doesn't guarantee the
-  file exists — check. Upload with `gh secret set UNITY_LICENSE < Unity_lic.ulf`.
-- **Pro / Plus**: `UNITY_SERIAL` (from the Unity ID subscriptions page) instead of `UNITY_LICENSE`,
-  plus email and password. GameCI returns the seat after each job; every concurrently running matrix
-  job activates its own machine, so cap `max-parallel` if activations run out.
+GameCI activates a fresh Editor inside a Docker container on **every job** — hosted or self-hosted —
+so it needs a license it can activate unattended:
+
+- **Pro / Plus** (the default when the team has it): `UNITY_SERIAL` (from the Unity ID subscriptions
+  page) plus `UNITY_EMAIL` and `UNITY_PASSWORD`. GameCI returns the seat after each job; every
+  concurrently running matrix job activates its own machine, so cap `max-parallel` if activations run out.
 - **License server** (floating licenses): the `unityLicensingServer` input on both actions.
+- **Personal — only with an existing portable `.ulf`.** `UNITY_LICENSE` = the full contents of a
+  `Unity_lic.ulf` (legacy locations: `C:\ProgramData\Unity\Unity_lic.ulf`,
+  `/Library/Application Support/Unity/Unity_lic.ulf`, `~/.local/share/unity3d/Unity/Unity_lic.ulf`),
+  plus email and password; upload with `gh secret set UNITY_LICENSE < Unity_lic.ulf`. **New Personal
+  activations don't produce one**, so check for the file before promising this path — see below.
+
+### Personal licenses without a `.ulf` (most teams now)
+
+Verified 2026-09-28. Don't send users hunting for a `.ulf` or into manual activation:
+
+- **Hub and the Unity CLI write `UnityEntitlementLicense.xml`**, bound to the activating machine
+  (`Legacy.MachineBinding1/2`) and refreshed about every 30 days. It won't activate in a CI container.
+- **Manual (offline) activation is closed to Personal.** Uploading a `.alf` (GameCI's
+  `create-activation-file`, the CircleCI orb, or `unity license activate --generate-request`) to
+  license.unity3d.com/manual returns: *"You are not eligible to activate your license offline.
+  Offline activation is available only for Enterprise and Industry seats."* This applies to GitHub
+  Actions, CircleCI, GitLab — every GameCI integration.
+- **Don't use `game-ci/unity-license-activate`** or page-editing workarounds. The tool drives that
+  same manual-activation page (unmaintained since 2021, needs the Unity password, 2FA secret, and a
+  secret-writing GitHub token in CI), and the workarounds sidestep Unity's licensing — they can put
+  the user's Unity account at risk.
+
+Offer instead, and let the user pick:
+
+| Option | Personal OK | Notes |
+| --- | --- | --- |
+| Unity CLI on a self-hosted runner (`unity-init` skill, `machine` mode) | Yes | A person signs in once on the runner; no license secret. The runner can be a teammate's PC. |
+| Unity Build Automation (Unity DevOps) | Yes | Unity activates on its own build machines; GitHub Actions starts builds and reports tests. Free tier (2026: 200 Windows, 100 Linux, 100 Mac minutes/month, 25 GB); the project locks when exceeded until upgraded. The `unity-build-automation` skill / `/claude-unity-devkit:setup-cloud-build`. |
+| Pro / Plus + GameCI on hosted runners | Serial | Everything in this skill works as written. |
 - **Fork PRs and Dependabot PRs** don't receive Actions secrets; the test job's `if:` skips fork PRs
   instead of failing them. Dependabot PRs need the license added under Dependabot secrets, or they fail.
 

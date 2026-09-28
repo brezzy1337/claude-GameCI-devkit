@@ -19,7 +19,9 @@ Check each changed workflow:
 - **Action references** — every `uses:` is pinned to a major tag or full commit SHA, never a branch;
   GameCI actions are canonical (`game-ci/unity-test-runner`, `game-ci/unity-builder`) on supported
   majors; no retired versions (e.g. `actions/cache` v1–v3).
-- **License secrets** — `UNITY_LICENSE` (Personal: the .ulf contents) or `UNITY_SERIAL` (Pro/Plus),
+- **License secrets** — `UNITY_SERIAL` (Pro/Plus) or `UNITY_LICENSE` (a legacy portable Personal
+  `.ulf`; flag as Warning if CLAUDE.md doesn't confirm the team has one — new Personal activations
+  can't produce it, and offline activation is Enterprise/Industry only),
   plus `UNITY_EMAIL` and `UNITY_PASSWORD`, passed through `env:` on the GameCI steps only — not at
   workflow level, never echoed, never interpolated into `run:` scripts.
 - **Trigger safety** — no `pull_request_target` combined with checking out the PR head; test jobs on

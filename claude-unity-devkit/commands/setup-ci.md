@@ -33,8 +33,13 @@ Context (gathered for you):
      `StandaloneWindows64`, `Android`. Pre-select anything named in $ARGUMENTS.
    - **Runners**: GitHub-hosted `ubuntu-latest` (default) or self-hosted — if self-hosted, ask for the
      exact labels (e.g. `[self-hosted, linux, x64, unity]`).
-   - **License**: Personal (default — `UNITY_LICENSE` + `UNITY_EMAIL` + `UNITY_PASSWORD`) or Pro/Plus
-     (`UNITY_SERIAL` + `UNITY_EMAIL` + `UNITY_PASSWORD`).
+   - **License**: Pro/Plus (`UNITY_SERIAL` + `UNITY_EMAIL` + `UNITY_PASSWORD`), license server, or
+     Personal. For Personal, first ask whether they already have a portable `Unity_lic.ulf`; new
+     Personal activations don't produce one and offline activation is Enterprise/Industry only. No
+     `.ulf` → stop and offer the alternatives in the skill's "Personal licenses without a `.ulf`"
+     table (Unity Build Automation via `/claude-unity-devkit:setup-cloud-build`, or the Unity CLI on a
+     self-hosted runner via `/claude-unity-devkit:unity-init`)
+     instead of writing GameCI workflows that can't activate.
    - **Default branch** (for push triggers) and whether every PR should also be built (default: PRs
      run tests only).
 
@@ -54,12 +59,9 @@ Context (gathered for you):
 
 7. **Print the secrets and activation steps.** Show which secrets already exist
    (`gh secret list`), then print exactly what I still need to do — I run these myself:
-   - **Personal license:** in Unity Hub → Preferences → Licenses → Add → *Get a free personal
-     license*. The `.ulf` file is then at `C:\ProgramData\Unity\Unity_lic.ulf` (Windows),
-     `/Library/Application Support/Unity/Unity_lic.ulf` (macOS), or
-     `~/.local/share/unity3d/Unity/Unity_lic.ulf` (Linux). A license shown in Hub doesn't guarantee
-     the file exists — check for it.
-     `gh secret set UNITY_LICENSE < <path-to>/Unity_lic.ulf`
+   - **Personal license (existing portable `.ulf` only):**
+     `gh secret set UNITY_LICENSE < <path-to>/Unity_lic.ulf`. Never suggest manual activation,
+     `unity-license-activate`, or page-editing workarounds.
    - **Pro/Plus:** `gh secret set UNITY_SERIAL` (serial from the Unity ID subscriptions page). GameCI
      returns the seat after every job.
    - Both: `gh secret set UNITY_EMAIL` and `gh secret set UNITY_PASSWORD`. Accounts created with
