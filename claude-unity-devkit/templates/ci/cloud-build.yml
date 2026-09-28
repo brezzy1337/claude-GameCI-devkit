@@ -1,0 +1,86 @@
+# Unity Build Automation (UBA), driven from GitHub -- from claude-unity-devkit templates/ci/cloud-build.yml.
+# Copy .github/scripts/uba-build.sh (templates/ci/uba-build.sh) alongside it.
+#
+# Unity's build machines hold the Editor license, so this runs on a plain ubuntu-latest runner with
+# no Unity install and no license secret -- the way to get cloud builds on a Unity Personal license.
+# Each run starts a UBA build (EditMode + PlayMode tests, then a StandaloneWindows64 build), waits,
+# and reports tests and status in the run summary. TAILOR markers: /claude-unity-devkit:setup-cloud-build
+# resolves them; edit by hand otherwise.
+#
+#   push to stable        -> tests + playtest build
+#   v* tag (from main)    -> tests + release build
+#   PR labeled cloud-ci   -> tests + build of the PR head (spends minutes: use for risky PRs)
+#   manual                -> Actions tab -> Unity Cloud Build -> Run workflow
+#
+# UBA free tier (2026): 200 Windows minutes/month; the DevOps project locks when exceeded.
+#
+# Secrets:   UNITY_SERVICE_ACCOUNT_ID, UNITY_SERVICE_ACCOUNT_SECRET (role: Automation User)
+# Variables: UBA_ORG_ID, UBA_PROJECT_ID, UBA_TARGET
+
+name: Unity Cloud Build
+
+on:
+  push:
+    branches: [stable] # TAILOR: integration branch
+    tags: ['v*']
+  pull_request:
+    types: [labeled, synchronize]
+  workflow_dispatch:
+
+# One UBA target builds one thing at a time (it answers 409 otherwise), so queue runs per ref and
+# never cancel one mid-build -- canceling here would waste the minutes already spent in UBA.
+concurrency:
+  group: uba-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: UBA build + tests
+    # PRs only when the cloud-ci label is added, or on new pushes to a PR that has it; never forks.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       ((github.event.action == 'labeled' && github.event.label.name == 'cloud-ci') ||
+        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'cloud-ci'))))
+    runs-on: ubuntu-latest
+    # Polling is cheap, but it counts against GitHub Actions minutes for as long as UBA runs.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Run the build in Unity Build Automation
+        id: uba
+        env:
+          UNITY_SERVICE_ACCOUNT_ID: ${{ secrets.UNITY_SERVICE_ACCOUNT_ID }}
+          UNITY_SERVICE_ACCOUNT_SECRET: ${{ secrets.UNITY_SERVICE_ACCOUNT_SECRET }}
+          UBA_ORG_ID: ${{ vars.UBA_ORG_ID }}
+          UBA_PROJECT_ID: ${{ vars.UBA_PROJECT_ID }}
+          UBA_TARGET: ${{ vars.UBA_TARGET }}
+          # PRs build their head; pushes and tags build the pushed commit on its branch
+          # (tags come from main). Empty values fall back to the target's configured branch.
+          # TAILOR: 'main' = the production branch that release tags are cut from.
+          BUILD_BRANCH: ${{ github.event_name == 'pull_request' && github.head_ref || (github.ref_type == 'tag' && 'main' || github.ref_name) }}
+          BUILD_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          CAUSED_BY: GitHub Actions ${{ github.event_name }} ${{ github.ref_name }} (run ${{ github.run_id }})
+          UBA_STATE_FILE: ${{ runner.temp }}/uba-build-number
+        run: |
+          echo "::add-mask::$UNITY_SERVICE_ACCOUNT_SECRET"
+          .github/scripts/uba-build.sh
+
+      # Stop the UBA build if this run is canceled by hand, so it doesn't keep spending minutes.
+      - name: Cancel the UBA build
+        if: cancelled()
+        env:
+          UNITY_SERVICE_ACCOUNT_ID: ${{ secrets.UNITY_SERVICE_ACCOUNT_ID }}
+          UNITY_SERVICE_ACCOUNT_SECRET: ${{ secrets.UNITY_SERVICE_ACCOUNT_SECRET }}
+          TARGET_URL: https://build-automation.services.api.unity.com/v2/orgs/${{ vars.UBA_ORG_ID }}/projects/${{ vars.UBA_PROJECT_ID }}/buildtargets/${{ vars.UBA_TARGET }}
+          STATE_FILE: ${{ runner.temp }}/uba-build-number
+        run: |
+          [ -s "$STATE_FILE" ] || { echo "No UBA build was started."; exit 0; }
+          curl -sS -X DELETE -u "$UNITY_SERVICE_ACCOUNT_ID:$UNITY_SERVICE_ACCOUNT_SECRET" \
+            "$TARGET_URL/builds/$(cat "$STATE_FILE")" -o /dev/null -w 'Cancel: HTTP %{http_code}\n'
