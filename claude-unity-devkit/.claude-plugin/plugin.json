@@ -1,6 +1,6 @@
 {
   "name": "claude-unity-devkit",
-  "description": "Workflow skills, agents, and commands for Unity / C# game development: subagent orchestration, code-todo handoffs, a ship workflow, GameCI pipelines, and Droplet deploys.",
+  "description": "Workflow skills, agents, and commands for Unity / C# game development: Unity CLI setup (editors, Unity-aware git, branch model), CI via Unity Build Automation (Unity Personal) or GameCI, subagent orchestration, code-todo handoffs, a ship workflow, and Droplet deploys.",
   "version": "0.1.0",
   "author": {
     "name": "Devin Phat",
@@ -8,5 +8,15 @@
   },
   "homepage": "https://github.com/brezzy1337/claude-GameCI-devkit",
   "repository": "https://github.com/brezzy1337/claude-GameCI-devkit",
-  "keywords": ["unity", "csharp", "gamedev", "gameci", "ci-cd", "subagents", "workflow"]
+  "keywords": [
+    "unity",
+    "csharp",
+    "gamedev",
+    "gameci",
+    "ci-cd",
+    "unity-cli",
+    "subagents",
+    "workflow",
+    "unity-build-automation"
+  ]
 }

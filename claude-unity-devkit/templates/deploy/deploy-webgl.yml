@@ -4,6 +4,8 @@
 #
 # Required repository secrets:
 #   UNITY_LICENSE, UNITY_EMAIL, UNITY_PASSWORD   (same as build.yml; Pro: UNITY_SERIAL)
+#     The build job needs a license GameCI can activate: Pro/Plus or a license server. On Unity
+#     Personal, build in Unity Build Automation instead (unity-deploy skill, Step 5).
 #   DEPLOY_SSH_KEY       private key of the deploy user (ed25519, no passphrase)
 #   DEPLOY_KNOWN_HOSTS   output of `ssh-keyscan -t ed25519 <droplet-ip>` run from a trusted network
 #   DEPLOY_HOST          Droplet IP or hostname

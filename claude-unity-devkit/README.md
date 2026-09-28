@@ -20,6 +20,8 @@ claude-unity-devkit/
 │   ├── ship-workflow/              # /ship: preflight → PR → review panel → CI checks → merge → notify
 │   ├── unity-project-conventions/  # CLAUDE.md Unity section, .gitignore/.gitattributes (LFS)/.editorconfig
 │   ├── gameci-pipeline/            # GameCI test + build workflows, license activation, troubleshooting
+│   ├── unity-init/                 # Unity CLI: editors, Unity-aware git, branch model, unity test/build CI
+│   ├── unity-build-automation/     # Unity Build Automation CI — the Personal-license path (no build machine)
 │   ├── unity-deploy/               # dedicated server (systemd) or WebGL (nginx) on a DigitalOcean Droplet
 │   └── unity-testing/              # UTF EditMode/PlayMode, test asmdefs, NSubstitute, coverage rubric
 ├── agents/                         # live specialists (invoked as claude-unity-devkit:<name>)
@@ -28,7 +30,7 @@ claude-unity-devkit/
 │   ├── consistency-reviewer.md  redundancy-checker.md
 │   └── performance-reviewer.md  gameplay-reviewer.md  ci-reviewer.md   # Unity lenses
 ├── commands/                       # /claude-unity-devkit:<name>
-│   ├── new-project.md   add-to-project.md   setup-ci.md   setup-deploy.md
+│   ├── new-project.md   add-to-project.md   setup-ci.md   setup-deploy.md   unity-init.md   setup-cloud-build.md
 │   └── code-todo.md     ship.md
 ├── hooks/hooks.json                # PreToolUse Unity path guard + OPTIONAL Slack backstop
 ├── scripts/
@@ -37,6 +39,7 @@ claude-unity-devkit/
 │   ├── format-csharp.sh            # dotnet format (whitespace, .editorconfig) or a no-op with a message
 │   ├── scaffold-unity-project.sh   # the Editor-free project scaffold (new-project + bootstrap.sh)
 │   ├── sync-templates.sh           # copies templates/ + agents/ into skills/*/assets (--check for drift)
+│   ├── test-uba-build.sh           # runs uba-build.sh against a mock UBA API (testdata/mock_uba.py)
 │   └── notify-slack.sh             # used by the optional Slack hook (needs SLACK_WEBHOOK_URL)
 ├── templates/                      # canonical files the commands copy into a project
 │   ├── project/  .gitignore .gitattributes .editorconfig manifest.json claude-settings.json asmdef/ tests/
@@ -100,13 +103,15 @@ For zero-touch onboarding, install at **project scope** so it auto-loads for eve
 
 ## Project setup commands
 
-Four commands bootstrap a repo onto the devkit — pick the ones that match your starting point:
+Six commands bootstrap a repo onto the devkit — pick the ones that match your starting point:
 
 | Command | Use it for | What it does |
 |---------|-----------|--------------|
 | `/claude-unity-devkit:new-project <name>` | a brand-new game | Asks for the Unity version (default **6000.3.24f1**, Unity 6.3 LTS), namespace, and Cinemachine; scaffolds `Assets/{Scripts,Scenes,Prefabs,Materials,Tests}`, `Packages/manifest.json` (Input System, uGUI + TextMeshPro, Test Framework, IDE packages, built-in modules), `ProjectVersion.txt`, runtime + EditMode/PlayMode asmdefs with smoke tests, `.gitignore`, `.gitattributes` (LFS), `.editorconfig`, and `.claude/settings.json` — **without** launching the Editor. Then generates the CLAUDE.md Unity conventions + orchestration sections and `.claude/agents/`. Unity Hub → *Add project from disk* finishes initialization. |
 | `/claude-unity-devkit:add-to-project` | a Unity repo you already have | No scaffolding — detects the Unity version, inspects the real `Assets/` and `.asmdef` layout, reports hygiene gaps (serialization mode, meta files, LFS), enables the plugin, and generates CLAUDE.md sections + agents that fit the existing code. Never invents paths. |
-| `/claude-unity-devkit:setup-ci` | adding CI | Checks GameCI images exist for your Unity version, asks for build targets, runner type, and license type, writes `.github/workflows/test.yml` + `build.yml`, runs `ci-reviewer`, and prints the exact secrets and license-activation steps. |
+| `/claude-unity-devkit:unity-init` | standardizing on the Unity CLI | Installs the pinned Unity CLI, the project's Editor and build modules; runs `unity vcs doctor`, `merge-setup`, and `hooks install` and marks scenes `lockable`; creates the `stable` integration branch (`main` = production); writes `.github/workflows/unity.yml` (`unity test` on PRs into `stable`, `unity build` on `stable` and `v*` tags, self-hosted or hosted, Personal/Pro/floating licensing); adds Branching, Unity CLI, and CI sections to CLAUDE.md; prints secrets, runner, and teammate steps. |
+| `/claude-unity-devkit:setup-cloud-build` | CI on a Unity **Personal** license | Writes a GitHub Actions workflow + `uba-build.sh` that start Unity Build Automation builds (EditMode + PlayMode tests, then the build), wait, and report in the run summary — Unity's machines hold the license, so nothing runs the Editor in Actions. Looks up org/project IDs with the Unity CLI, and prints the Dashboard checklist, org-ID check, variables, and `cloud-ci` label. Free tier: 200 Windows minutes/month. |
+| `/claude-unity-devkit:setup-ci` | adding CI with GameCI (Pro/Plus or license server) | Checks GameCI images exist for your Unity version, asks for build targets, runner type, and license type, writes `.github/workflows/test.yml` + `build.yml`, runs `ci-reviewer`, and prints the exact secrets and license-activation steps. |
 | `/claude-unity-devkit:setup-deploy` | shipping builds | Asks for dedicated server (default) or WebGL, writes the deploy workflow, `deploy/deploy.sh`, and the systemd unit or nginx site, and prints the SSH key, host-key pin, secrets, and one-time Droplet setup. |
 
 Day-to-day workflow: `/claude-unity-devkit:code-todo <change>` → (approve in terminal) →
@@ -217,6 +222,7 @@ claude plugin validate .                         # from the repo root: the marke
 claude plugin validate ./claude-unity-devkit     # the plugin
 claude plugin validate --strict ./claude-unity-devkit
 bash claude-unity-devkit/scripts/sync-templates.sh --check   # skill assets match templates/ + agents/
+bash claude-unity-devkit/scripts/test-uba-build.sh            # uba-build.sh against the mock UBA API
 ```
 
 - `plugin.json` has `name` (lowercase-kebab), `version`, `description`; the version matches the
@@ -226,3 +232,7 @@ bash claude-unity-devkit/scripts/sync-templates.sh --check   # skill assets matc
   no plugin agent declares `hooks`, `mcpServers`, or `permissionMode` (ignored for plugin agents).
 - Skill/command descriptions contain no `: ` sequences or `<…>` placeholders.
 - Load locally first: `claude --plugin-dir ./claude-unity-devkit`, then `/reload-plugins`.
+- Live-editing an installed copy: Claude Code caches installs per version, so a local clone can be
+  symlinked over `~/.claude/plugins/cache/claude-unity-devkit/claude-unity-devkit/<version>` and
+  picked up by `/reload-plugins`. Bumping `version` makes the next install copy a fresh cache
+  directory — re-create the symlink after a bump.

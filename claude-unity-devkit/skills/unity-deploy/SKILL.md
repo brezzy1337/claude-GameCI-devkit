@@ -117,7 +117,14 @@ Ask for anything not in the repo — hosts, paths, and ports are never guessed.
 ## Step 5 — Wire it into GitHub Actions
 
 The deploy workflows build the artifact themselves (same GameCI settings and Library cache as
-`build.yml`), then deploy in a second job:
+`build.yml`), then deploy in a second job. **That build job needs a license GameCI can activate on
+a hosted runner — Pro/Plus serial or a license server.** On Unity Personal it can't (offline
+activation is Enterprise/Industry only; see `gameci-pipeline`). For Personal, replace the build job
+with a Unity Build Automation build: a UBA target for the deploy platform (a Linux server target
+with the Dedicated Server subtarget, or WebGL), and a step that runs the `unity-build-automation`
+skill's `uba-build.sh` with `DOWNLOAD_DIR` set, which downloads the primary artifact (a zip —
+extract it into the layout `deploy.sh` expects before uploading it for the deploy job). The deploy
+job itself is unchanged.
 
 - `environment: production` — add required reviewers so every deploy waits for a human; this is the
   deploy equivalent of `/ship`'s merge gate.
@@ -140,8 +147,8 @@ The deploy workflows build the artifact themselves (same GameCI settings and Lib
 
 ## Grounding notes
 
-- Dedicated Server build support is available on the Personal license; the build itself follows the
-  `gameci-pipeline` license setup.
+- Dedicated Server build support is available on the Personal license, but *building it in CI* on
+  Personal needs Unity Build Automation or a self-hosted runner — see Step 5.
 - This is single-host deployment. Multiple regions, autoscaling, or matchmaking are a different design
   (fleet managers, containers) — say so rather than stretching this one.
 - Keep secrets out of the repo and out of the build: runtime secrets go in the EnvironmentFile on the

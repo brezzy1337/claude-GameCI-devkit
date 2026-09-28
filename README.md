@@ -46,9 +46,14 @@ To try it without installing: clone the repo and run
 | --- | --- |
 | New game | `/claude-unity-devkit:new-project my-game`, then Unity Hub → *Add project from disk* |
 | Existing Unity repo | `/claude-unity-devkit:add-to-project` |
-| Add CI (GameCI) | `/claude-unity-devkit:setup-ci` |
+| Standardize on the Unity CLI (editors, git, branch model) | `/claude-unity-devkit:unity-init` |
+| Add CI on Unity **Personal** (Unity Build Automation) | `/claude-unity-devkit:setup-cloud-build` |
+| Add CI with GameCI (Pro/Plus or license server) | `/claude-unity-devkit:setup-ci` |
 | Add deploys (dedicated server or WebGL → Droplet) | `/claude-unity-devkit:setup-deploy` |
 | Day-to-day | `/claude-unity-devkit:code-todo <change>` → approve → `/claude-unity-devkit:ship` |
+
+Unity Personal can't activate the Editor on hosted CI (offline activation is Enterprise/Industry
+only), so Personal teams use Unity Build Automation or a self-hosted runner — the skills explain why.
 
 Full documentation — what's inside, agents, hooks, MCP slots, pinned versions — is in
 [`claude-unity-devkit/README.md`](claude-unity-devkit/README.md).
