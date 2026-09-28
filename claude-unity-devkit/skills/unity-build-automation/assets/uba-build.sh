@@ -54,7 +54,7 @@ fail_http() {
   local what="$1"
   case "$CODE" in
     401) err "$what: 401 — the service-account key ID or secret is wrong." ;;
-    403) err "$what: 403 — give the service account the **Automation User** role on this project." ;;
+    403) err "$what: 403 — give the service account the **Automation User** role on this project. $(detail)" ;;
     404) err "$what: 404 — check UBA_ORG_ID / UBA_PROJECT_ID / UBA_TARGET (org ID format: see CLAUDE.md → CI)." ;;
     *)   err "$what: HTTP $CODE $(detail)" ;;
   esac
@@ -76,6 +76,11 @@ else
   echo "::warning::Free-tier check returned HTTP $CODE (a project-scoped role can't read it); continuing."
 fi
 
+# Read the target first so a 403 on start can be told apart from a key with no project access.
+api GET "$TARGET_PATH"
+[ "$CODE" = 200 ] || fail_http "Read target '$UBA_TARGET'"
+echo "Target '$UBA_TARGET' readable; starting a build."
+
 # 2. Start the build. 409 = the target already has a build pending; wait for it rather than fail.
 payload="$(jq -nc --arg b "${BUILD_BRANCH:-}" --arg c "${BUILD_COMMIT:-}" --arg by "${CAUSED_BY:-GitHub Actions}" \
   '{clean: false, causedBy: $by} + (if $b != "" then {branch: $b} else {} end) + (if $c != "" then {commit: $c} else {} end)')"
@@ -86,6 +91,10 @@ for attempt in $(seq 0 "$BUSY_RETRIES"); do
   echo "Target busy (409); retrying in ${BUSY_WAIT_SECONDS}s ($((attempt + 1))/$BUSY_RETRIES)."
   sleep "$BUSY_WAIT_SECONDS"
 done
+if [ "$CODE" = 403 ]; then
+  err "Start build: 403, but the same key can read the target — the service account's role lets it read builds but not start them. Check it is **Automation User** (not a viewer role) on this project. $(detail)"
+  exit 1
+fi
 [ "$CODE" = 202 ] || fail_http "Start build"
 start_error="$(jq -r '.[0].error // empty' "$BODY")"
 [ -n "$start_error" ] && { err "Build refused: $start_error"; exit 1; }
