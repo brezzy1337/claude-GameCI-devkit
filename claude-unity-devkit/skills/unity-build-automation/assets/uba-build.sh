@@ -10,7 +10,6 @@
 #   UBA_ORG_ID, UBA_PROJECT_ID, UBA_TARGET                    where to build (repo variables)
 # Optional env:
 #   BUILD_BRANCH, BUILD_COMMIT    override the target's branch / commit (e.g. a PR head)
-#   CAUSED_BY                     free text shown in the Unity Dashboard
 #   POLL_SECONDS (30), MAX_WAIT_MINUTES (150), BUSY_RETRIES (10), BUSY_WAIT_SECONDS (60)
 #   DOWNLOAD_DIR                  if set, download the primary artifact there
 #   UBA_API                       API base (default https://build-automation.services.api.unity.com/v2)
@@ -82,8 +81,9 @@ api GET "$TARGET_PATH"
 echo "Target '$UBA_TARGET' readable; starting a build."
 
 # 2. Start the build. 409 = the target already has a build pending; wait for it rather than fail.
-payload="$(jq -nc --arg b "${BUILD_BRANCH:-}" --arg c "${BUILD_COMMIT:-}" --arg by "${CAUSED_BY:-GitHub Actions}" \
-  '{clean: false, causedBy: $by} + (if $b != "" then {branch: $b} else {} end) + (if $c != "" then {commit: $c} else {} end)')"
+# causedBy is an enum on Unity's side (free text → HTTP 500), so it's left out.
+payload="$(jq -nc --arg b "${BUILD_BRANCH:-}" --arg c "${BUILD_COMMIT:-}" \
+  '{clean: false} + (if $b != "" then {branch: $b} else {} end) + (if $c != "" then {commit: $c} else {} end)')"
 for attempt in $(seq 0 "$BUSY_RETRIES"); do
   api POST "$TARGET_PATH/builds" "$payload"
   [ "$CODE" != 409 ] && break

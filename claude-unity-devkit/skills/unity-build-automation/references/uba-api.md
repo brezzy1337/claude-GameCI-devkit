@@ -19,7 +19,7 @@ read 2026-09-28. Re-check the spec before using an endpoint or field not listed 
 | Call | Method + path | Notes |
 | --- | --- | --- |
 | List targets | `GET /orgs/{orgid}/projects/{projectid}/buildtargets` | `limit`, `offset`, `branch`, `include_last_success` |
-| Start build | `POST T/builds` | **202** + *array* of builds (`[0].build` = number). **409** = a build is already pending; **422** = refused. Body: `clean`, `delay` (ms), `branch` (override), `commit`, `causedBy`, `machineTypeLabel`, `unityVersion`, `envvars`. `{"clean": false}` uses the target's own config. |
+| Start build | `POST T/builds` | **202** + *array* of builds (`[0].build` = number). **409** = a build is already pending; **422** = refused. Body: `clean`, `delay` (ms), `branch` (override), `commit`, `causedBy` (an enum — free text returns HTTP 500 "not a valid enum value"; omit it), `machineTypeLabel`, `unityVersion`, `envvars`. `{"clean": false}` uses the target's own config. |
 | Build status | `GET T/builds/{number}` | `buildStatus`; `include=testResults,failureDetails,buildReports,links.artifacts` |
 | List builds | `GET T/builds?per_page=&page=&buildStatus=` | |
 | Log | `GET T/builds/{number}/log` | Redirects (303/307) to a signed URL — use `curl -L`. `offsetlines`, `maxLines`, `progressive` |
@@ -28,7 +28,7 @@ read 2026-09-28. Re-check the spec before using an endpoint or field not listed 
 | Share | `POST T/builds/{number}/share` `{shareExpiry}` | 201 `{shareid, shareExpiry}`; calling again revokes the old share. Public share URL format undocumented |
 | Cancel | `DELETE T/builds/{number}` | 204; no-op on finished builds. `DELETE T/builds` cancels all |
 | Failures | `GET T/builds/{number}/failures` | |
-| Free tier | `GET /orgs/{orgid}/free-tier-status` | `{freeTierLimitReached}` — check before starting. Org-level: a project-scoped Automation User role gets 403, so treat that as "unknown" and continue |
+| Free tier | `GET /orgs/{orgid}/free-tier-status` | `{freeTierLimitReached}` — check before starting. Org-level: a project-scoped Automation User role gets 403 (verified), so treat that as "unknown" and continue |
 | Concurrency | `GET /orgs/{orgid}/concurrency-limit` | `{limit, maxAllowable}` |
 | Machine types | `GET .../machinetypes` | each has `freeTierEligible` |
 | Unity versions | `GET .../versions/unity` | check the project's version is supported |
