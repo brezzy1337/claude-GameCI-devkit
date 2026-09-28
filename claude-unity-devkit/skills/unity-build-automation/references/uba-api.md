@@ -28,7 +28,7 @@ read 2026-09-28. Re-check the spec before using an endpoint or field not listed 
 | Share | `POST T/builds/{number}/share` `{shareExpiry}` | 201 `{shareid, shareExpiry}`; calling again revokes the old share. Public share URL format undocumented |
 | Cancel | `DELETE T/builds/{number}` | 204; no-op on finished builds. `DELETE T/builds` cancels all |
 | Failures | `GET T/builds/{number}/failures` | |
-| Free tier | `GET /orgs/{orgid}/free-tier-status` | `{freeTierLimitReached}` — check before starting |
+| Free tier | `GET /orgs/{orgid}/free-tier-status` | `{freeTierLimitReached}` — check before starting. Org-level: a project-scoped Automation User role gets 403, so treat that as "unknown" and continue |
 | Concurrency | `GET /orgs/{orgid}/concurrency-limit` | `{limit, maxAllowable}` |
 | Machine types | `GET .../machinetypes` | each has `freeTierEligible` |
 | Unity versions | `GET .../versions/unity` | check the project's version is supported |

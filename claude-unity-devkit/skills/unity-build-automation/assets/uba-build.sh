@@ -68,10 +68,12 @@ if [ "$CODE" = 200 ]; then
     err "Unity DevOps free-tier limit reached — builds would be canceled on start. Add a payment method or wait for next month's minutes."
     exit 1
   fi
-elif [ "$CODE" = 401 ] || [ "$CODE" = 403 ] || [ "$CODE" = 404 ]; then
+elif [ "$CODE" = 401 ]; then
   fail_http "Free-tier check"
 else
-  echo "::warning::Free-tier check returned HTTP $CODE; continuing."
+  # Org-level endpoint: a project-scoped Automation User role gets 403 here while the build calls
+  # below still work. Unity refuses the build itself if the free tier is exhausted.
+  echo "::warning::Free-tier check returned HTTP $CODE (a project-scoped role can't read it); continuing."
 fi
 
 # 2. Start the build. 409 = the target already has a build pending; wait for it rather than fail.
