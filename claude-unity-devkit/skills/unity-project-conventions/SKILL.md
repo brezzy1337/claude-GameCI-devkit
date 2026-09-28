@@ -145,6 +145,12 @@ Details and the reasons behind each rule are in `references/assets-and-serializa
   coordinate with the team; never do it unasked.
 - **Smart merge** — `.gitattributes` marks Unity YAML `merge=unityyamlmerge`; each developer
   registers UnityYAMLMerge once (the commands are in the file's header).
+- **Branch model and locking** — `main` ships, `stable` integrates, short-lived `feature/*` /
+  `level/*` branches; `*.unity` and in-place-edited binary art marked `lockable`. The model, the
+  reasons, and the setup commands are in `references/branching.md`; record it in CLAUDE.md so CI,
+  `/code-todo`, and `/ship` agree on the integration branch. With the Unity CLI,
+  `unity vcs merge-setup` and `unity vcs hooks install` replace the manual merge-driver setup
+  (the `unity-init` skill).
 - **`.meta` files** — committed with their asset, never hand-edited, never with a reused GUID; empty
   folders get no `.meta` in git (use `.gitkeep`, which Unity ignores).
 - **ProjectSettings** — Force Text and Visible Meta Files are set in the Editor (Project Settings →

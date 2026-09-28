@@ -72,7 +72,8 @@ Context (gathered for you):
 
 7. **Confirm the workflows.** Make sure the generated CLAUDE.md references
    `/claude-unity-devkit:code-todo` and `/claude-unity-devkit:ship` so the implement → review → ship
-   chain works here. If there are no GameCI workflows yet, point me at `/claude-unity-devkit:setup-ci`;
+   chain works here. If there is no CI yet, point me at `/claude-unity-devkit:unity-init` (Unity CLI: machine,
+   Unity-aware git, branch model, and CI) — or `/claude-unity-devkit:setup-ci` for GameCI;
    for deploys, `/claude-unity-devkit:setup-deploy`. Mention the optional MCP servers and Slack hook.
 
 8. **Next steps.** Print: run `/reload-plugins`, then try `/claude-unity-devkit:code-todo` on a small

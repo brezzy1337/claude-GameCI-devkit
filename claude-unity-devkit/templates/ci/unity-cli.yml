@@ -1,0 +1,265 @@
+# Unity CI driven by the Unity CLI (`unity`), from the claude-unity-devkit `unity-init` skill.
+# Based on the workflow `unity ci init` generates (Unity CLI 1.0.0-beta.11), restructured for the
+# stable/main branch model:
+#
+#   PR into stable      -> test (EditMode + PlayMode)
+#   push to stable      -> test, then the playtest build (short retention)
+#   v* tag (from main)  -> test, then the release build
+#
+# Runs on GitHub-hosted or self-hosted runners (Linux, Windows via Git Bash, macOS). On a hosted VM
+# the workflow installs the CLI, Editor, and modules itself. On a self-hosted runner -- often a
+# teammate's own PC -- it never installs anything: it verifies the pinned CLI and the project's
+# Editor are present and fails with the exact fix command, because installers on a personal machine
+# can need elevation (a UAC prompt nobody sees) and are the owner's call. Self-hosted runners keep
+# the Editor installed and Library/ warm between runs.
+#
+# Every TAILOR marker is resolved by /claude-unity-devkit:unity-init. Never write secrets into this
+# file. Secrets this workflow reads (Settings -> Secrets and variables -> Actions):
+#
+#   UNITY_SERVICE_ACCOUNT_ID       Unity Cloud -> Administration -> Service accounts -> Keys.
+#   UNITY_SERVICE_ACCOUNT_SECRET   Covers Unity *services* only, not the Editor license.
+#   UNITY_LICENSE_FILE_BASE64      only when UNITY_LICENSE_MODE is "file"
+#   UNITY_LICENSE_SERIAL           only when UNITY_LICENSE_MODE is "serial"
+
+name: Unity
+
+on:
+  pull_request:
+    branches: [stable] # TAILOR: integration branch
+  push:
+    branches: [stable] # TAILOR: integration branch
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: unity-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  UNITY_CLI_VERSION: 1.0.0-beta.11 # TAILOR: pinned CLI version; bump deliberately
+  UNITY_CLI_CHANNEL: beta
+  UNITY_PROJECT_PATH: . # TAILOR: folder holding Assets/, relative to the repo root
+  # TAILOR: player-support modules a target needs when it isn't the runner's own platform
+  # (e.g. windows-mono on a Linux runner). Empty when a Windows runner builds Windows.
+  UNITY_MODULES: windows-mono
+  BUILD_TARGET: StandaloneWindows64 # TAILOR
+  BUILD_NAME: Game # TAILOR: executable name (Player Settings -> Product Name, no spaces)
+  # machine: license pre-activated on a self-hosted runner (see references/runner-setup.md)
+  # file:    offline license file from UNITY_LICENSE_FILE_BASE64 (must be portable, see SKILL.md)
+  # serial:  Pro/Plus serial from UNITY_LICENSE_SERIAL, returned after every job
+  UNITY_LICENSE_MODE: machine # TAILOR
+  UNITY_FORMAT: github
+  UNITY_NON_INTERACTIVE: '1'
+  UNITY_NO_UPDATE_CHECK: '1'
+
+jobs:
+  test:
+    name: Test (EditMode + PlayMode)
+    # Fork PRs get no secrets and must never reach a self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, unity] # TAILOR: or ubuntu-latest
+    timeout-minutes: 90
+    env:
+      UNITY_SERVICE_ACCOUNT_ID: ${{ secrets.UNITY_SERVICE_ACCOUNT_ID }}
+      UNITY_SERVICE_ACCOUNT_SECRET: ${{ secrets.UNITY_SERVICE_ACCOUNT_SECRET }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: true
+          # Self-hosted: keep Library/ between runs; the next step cleans everything else.
+          clean: ${{ runner.environment == 'github-hosted' }}
+
+      - name: Clean the workspace (keep Library)
+        if: runner.environment != 'github-hosted'
+        run: |
+          p="${UNITY_PROJECT_PATH#./}"; [ "$p" = . ] && p=
+          git clean -ffdx -e "/${p:+$p/}Library/"
+
+      - &mask
+        name: Mask credentials in logs
+        run: |
+          [ -n "$UNITY_SERVICE_ACCOUNT_ID" ] && echo "::add-mask::$UNITY_SERVICE_ACCOUNT_ID"
+          [ -n "$UNITY_SERVICE_ACCOUNT_SECRET" ] && echo "::add-mask::$UNITY_SERVICE_ACCOUNT_SECRET"
+          true
+
+      - &install-cli
+        name: Unity CLI (install on hosted, verify on self-hosted)
+        run: |
+          have="$(unity version --format tsv 2>/dev/null | awk -F'\t' '$1=="version"{print $2}' || true)"
+          [ "$have" = "$UNITY_CLI_VERSION" ] && exit 0
+          if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+            curl -fsSL https://unity.com/install.sh | bash
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          else
+            echo "::error::Unity CLI ${have:-missing} on runner $RUNNER_NAME; the workflow pins $UNITY_CLI_VERSION. On that machine run: unity self-update --target $UNITY_CLI_VERSION --yes (or install it, see runner-setup.md)"
+            exit 1
+          fi
+
+      - &editor-version
+        name: Read the project's Editor version
+        id: editor
+        run: |
+          v="$(sed -n 's/^m_EditorVersion: //p' "$UNITY_PROJECT_PATH/ProjectSettings/ProjectVersion.txt")"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - &runtime-libs
+        name: Install the Editor's runtime libraries (hosted only)
+        if: runner.environment == 'github-hosted'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglu1-mesa libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libdrm2 libxtst6 \
+            libxrandr2 libxcursor1 libxcomposite1 libxdamage1 libxfixes3 libxi6 libxrender1 \
+            libxext6 libsm6 libice6 libxkbcommon0 libpango-1.0-0 libpangocairo-1.0-0 libcairo2 \
+            libgdk-pixbuf-2.0-0 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdbus-1-3 \
+            libnotify4 libsecret-1-0
+
+      - &download-cache
+        name: Restore the Editor download cache (hosted only)
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v6
+        with:
+          path: ~/.config/unityhub/downloads
+          key: unity-downloads-${{ steps.editor.outputs.version }}-${{ env.UNITY_MODULES }}
+
+      - &install-editor
+        name: Editor and modules (install on hosted, verify on self-hosted)
+        run: |
+          v="${{ steps.editor.outputs.version }}"
+          # shellcheck disable=SC2086 # UNITY_MODULES is a space-separated list
+          mods=${UNITY_MODULES:+-m $UNITY_MODULES}
+          if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+            # shellcheck disable=SC2086
+            unity install "$v" $mods --accept-eula --yes
+          elif ! unity editors path "$v" >/dev/null 2>&1; then
+            echo "::error::Editor $v is not installed on runner $RUNNER_NAME. On that machine run: unity install $v $mods --accept-eula --yes"
+            exit 1
+          fi
+
+      - &activate
+        name: Activate the Unity license
+        env:
+          UNITY_LICENSE_FILE_BASE64: ${{ secrets.UNITY_LICENSE_FILE_BASE64 }}
+          UNITY_LICENSE_SERIAL: ${{ secrets.UNITY_LICENSE_SERIAL }}
+        run: |
+          case "$UNITY_LICENSE_MODE" in
+            machine) echo "Using the license already active on this runner." ;;
+            file)
+              # Strip whitespace: secrets pasted from a wrapped terminal pick up spaces and newlines.
+              printf '%s' "$UNITY_LICENSE_FILE_BASE64" | tr -d '[:space:]' | base64 -d > "$RUNNER_TEMP/unity.ulf"
+              unity license activate --file "$RUNNER_TEMP/unity.ulf"
+              rm -f "$RUNNER_TEMP/unity.ulf" ;;
+            serial) unity license activate --serial "$UNITY_LICENSE_SERIAL" ;;
+            *) echo "::error::Unknown UNITY_LICENSE_MODE '$UNITY_LICENSE_MODE'"; exit 1 ;;
+          esac
+
+      # Fails in seconds when the machine can't test or build at all (no license, Editor missing,
+      # disk full, services unreachable). Exit 7 = a service was unreachable; worth re-running.
+      - &preflight
+        name: Preflight
+        working-directory: ${{ env.UNITY_PROJECT_PATH }}
+        run: unity doctor --ci
+
+      - name: Restore the Library cache (hosted only)
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.UNITY_PROJECT_PATH }}/Library
+          key: unity-library-test-${{ hashFiles('Packages/manifest.json', 'Packages/packages-lock.json', 'ProjectSettings/ProjectVersion.txt') }} # TAILOR: prefix globs with projectPath
+          restore-keys: unity-library-test-
+
+      # Exit 8 = tests ran and failed (don't retry); 6 = the run didn't finish (compile error,
+      # license, crash, timeout).
+      - name: EditMode tests
+        working-directory: ${{ env.UNITY_PROJECT_PATH }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/test-results"
+          unity test --mode EditMode --report-format junit --output "$GITHUB_WORKSPACE/test-results/editmode.xml" --timeout 1800
+
+      - name: PlayMode tests
+        if: success() || failure()
+        working-directory: ${{ env.UNITY_PROJECT_PATH }}
+        run: unity test --mode PlayMode --report-format junit --output "$GITHUB_WORKSPACE/test-results/playmode.xml" --timeout 1800
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: 14 # enough to debug this week's failures
+
+      - &return
+        name: Return the Unity license
+        if: always() && env.UNITY_LICENSE_MODE == 'serial'
+        run: unity license return --yes
+
+  build:
+    name: Build (${{ github.ref_type == 'tag' && 'release' || 'playtest' }})
+    needs: test
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, linux, x64, unity] # TAILOR: same as test
+    timeout-minutes: 90
+    env:
+      UNITY_SERVICE_ACCOUNT_ID: ${{ secrets.UNITY_SERVICE_ACCOUNT_ID }}
+      UNITY_SERVICE_ACCOUNT_SECRET: ${{ secrets.UNITY_SERVICE_ACCOUNT_SECRET }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: true
+          fetch-depth: 0 # tags, for --versioning-strategy tag
+          clean: ${{ runner.environment == 'github-hosted' }}
+
+      - name: Clean the workspace (keep Library)
+        if: runner.environment != 'github-hosted'
+        run: |
+          p="${UNITY_PROJECT_PATH#./}"; [ "$p" = . ] && p=
+          git clean -ffdx -e "/${p:+$p/}Library/"
+
+      - *mask
+      - *install-cli
+      - *editor-version
+      - *runtime-libs
+      - *download-cache
+      - *install-editor
+      - *activate
+      - *preflight
+
+      - name: Restore the Library cache (hosted only)
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.UNITY_PROJECT_PATH }}/Library
+          key: unity-library-${{ env.BUILD_TARGET }}-${{ hashFiles('Packages/manifest.json', 'Packages/packages-lock.json', 'ProjectSettings/ProjectVersion.txt') }} # TAILOR: prefix globs with projectPath
+          restore-keys: unity-library-${{ env.BUILD_TARGET }}-
+
+      - name: Build
+        working-directory: ${{ env.UNITY_PROJECT_PATH }}
+        run: |
+          strategy=none
+          [ "$GITHUB_REF_TYPE" = tag ] && strategy=tag
+          mkdir -p "$GITHUB_WORKSPACE/build/$BUILD_TARGET"
+          unity build --target "$BUILD_TARGET" \
+            --output-path "$GITHUB_WORKSPACE/build/$BUILD_TARGET/$BUILD_NAME.exe" \
+            --versioning-strategy "$strategy" --no-tail --timeout 4800
+        # TAILOR: the .exe suffix is Windows-only; drop it for other targets
+
+      - name: Upload the build
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.BUILD_NAME }}-${{ env.BUILD_TARGET }}-${{ github.ref_type == 'tag' && github.ref_name || format('stable-{0}', github.run_number) }}
+          path: build/${{ env.BUILD_TARGET }}/
+          # Playtest builds are for this week's feedback; releases are kept longer.
+          retention-days: ${{ github.ref_type == 'tag' && 90 || 14 }}
+
+      - *return
