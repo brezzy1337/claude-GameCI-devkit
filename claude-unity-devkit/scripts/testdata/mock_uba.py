@@ -31,9 +31,15 @@ class H(BaseHTTPRequestHandler):
         if not self.authed():
             return self.send(401, {"detail": "no auth"})
         if p == "/v2/orgs/ORG/free-tier-status":
-            if SCENARIO == "auth":
-                return self.send(403, {"title": "Forbidden"})
+            # Org-level endpoint: a project-scoped Automation User role gets 403 here (seen live); the
+            # script must warn and go on. "fail" and "auth" model that role, "ok"/"limit" an org-scoped one.
+            if SCENARIO in ("fail", "auth"):
+                return self.send(403, {"detail": "Not authorized"})
             return self.send(200, {"freeTierLimitReached": SCENARIO == "limit"})
+        if re.match(TP + r"$", p):
+            if SCENARIO == "auth":
+                return self.send(403, {"detail": "Not authorized"})
+            return self.send(200, {"buildtargetid": "win", "enabled": True})
         if re.match(TP + r"/builds/7/log$", p):
             return self.send(307, headers={"Location": f"http://127.0.0.1:{PORT}/signed/log"})
         if re.match(TP + r"/builds/7/artifacts$", p):
@@ -62,6 +68,8 @@ class H(BaseHTTPRequestHandler):
         if re.match(TP + r"/builds$", self.path):
             state["posts"] += 1
             assert body["clean"] is False and body["branch"] == "feature/x" and body["commit"] == "c0ffee", body
+            # causedBy is an enum on the real API; free text there returns HTTP 500.
+            assert "causedBy" not in body, body
             if state["posts"] == 1:
                 return self.send(409, {"detail": "pending"})
             return self.send(202, [{"build": 7, "buildStatus": "created"}])

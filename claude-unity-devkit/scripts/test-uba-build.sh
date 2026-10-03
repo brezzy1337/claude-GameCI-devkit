@@ -41,7 +41,7 @@ run ok    0 '| PlayMode | 3 | 0 |'
   || { echo "FAIL ok: artifact not downloaded or state file not written"; fails=$((fails + 1)); }
 run fail  1 'error CS0103: boom'
 run limit 1 'free-tier limit reached'
-run auth  1 'Automation User'
+run auth  1 'Automation User'   # target read 403 (free-tier 403 alone only warns)
 
 if [ "$fails" != 0 ]; then echo "$fails scenario(s) failed"; exit 1; fi
 echo "all scenarios passed"
