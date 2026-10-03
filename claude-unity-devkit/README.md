@@ -40,7 +40,8 @@ claude-unity-devkit/
 │   ├── scaffold-unity-project.sh   # the Editor-free project scaffold (new-project + bootstrap.sh)
 │   ├── sync-templates.sh           # copies templates/ + agents/ into skills/*/assets (--check for drift)
 │   ├── test-uba-build.sh           # runs uba-build.sh against a mock UBA API (testdata/mock_uba.py)
-│   └── notify-slack.sh             # used by the optional Slack hook (needs SLACK_WEBHOOK_URL)
+│   ├── notify-slack.sh             # used by the optional Slack hook (needs SLACK_WEBHOOK_URL)
+│   └── notify-discord.sh           # /ship's Discord post when the PR opens (needs DISCORD_WEBHOOK_URL)
 ├── templates/                      # canonical files the commands copy into a project
 │   ├── project/  .gitignore .gitattributes .editorconfig manifest.json claude-settings.json asmdef/ tests/
 │   ├── ci/       test.yml build.yml
@@ -120,6 +121,18 @@ loops `gameplay-reviewer` + `performance-reviewer` on gameplay slices, and gates
 Ship runs preflight (format, `.meta`, dependency audit), opens the PR after GATE 1, runs the review
 panel, waits on the GameCI checks, and merges after GATE 2.
 
+**Ship notifications: Slack or Discord.** Set the team's channel with a `Notifications: slack`,
+`Notifications: discord`, or `Notifications: none` line in the project CLAUDE.md's Ship workflow
+section; `/claude-unity-devkit:ship --notify=<channel>` overrides it for one run. Without either,
+`/ship` uses Discord if `DISCORD_WEBHOOK_URL` is set, else Slack if Slack MCP tools are connected.
+- **Slack** — `slack-notifier` posts each transition (opened, review, merged) to one thread through a
+  Slack MCP server (see below).
+- **Discord** — no MCP server: create a channel webhook (Channel → Edit → Integrations → Webhooks)
+  and expose it as `DISCORD_WEBHOOK_URL` (a Codespaces secret or local env var — never commit it).
+  `scripts/notify-discord.sh` posts one "PR opened" embed linking to GitHub, where the PR is
+  reviewed and merged; a webhook can't start a thread in a text channel, so there are no per-stage
+  posts.
+
 To scaffold from a plain terminal *before* the plugin is installed, `bootstrap.sh` runs the same
 scaffold + settings step (run it from a clone of this repo — it copies from `templates/`):
 
@@ -171,6 +184,8 @@ the plugin is enabled, so until you fill them in they show up as failed in `/plu
   If you install the `github` companion plugin, delete the `github` slot to avoid a duplicate server.
 - Provide credentials via environment variables — each teammate supplies their own:
   - `SLACK_BOT_TOKEN`, `SLACK_TEAM_ID` (so `slack-notifier` can post to the team channel)
+- Discord teams don't need an MCP slot: `/ship` posts through `DISCORD_WEBHOOK_URL` (see above). You
+  can delete the `slack` slot if you only use Discord.
   - `NOTION_TOKEN` (so workflows can read design / architecture pages)
   - `GITHUB_PERSONAL_ACCESS_TOKEN` (for the GitHub slot, if you keep it)
 

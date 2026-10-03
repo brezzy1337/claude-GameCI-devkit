@@ -1,7 +1,7 @@
 ---
-description: Open a PR for a Unity branch, run a multi-lens review, wait for GameCI checks, and notify Slack — with approval gates before opening and merging
-argument-hint: [short summary of the change]
-allowed-tools: Bash(git status *), Bash(git diff *), Bash(git branch *), Bash(git merge-base *), Bash(gh pr view *), Bash(gh pr diff *), Bash(gh pr checks *), Bash(gh run list *), Bash(gh run view *), Bash(dotnet format *), Read, Grep, Glob
+description: Open a PR for a Unity branch, run a multi-lens review, wait for GameCI checks, and notify Slack or Discord — with approval gates before opening and merging
+argument-hint: "[--notify=slack|discord|none] [short summary of the change]"
+allowed-tools: Bash(git status *), Bash(git diff *), Bash(git branch *), Bash(git merge-base *), Bash(gh pr view *), Bash(gh pr diff *), Bash(gh pr checks *), Bash(gh run list *), Bash(gh run view *), Bash(dotnet format *), Bash(.claude/scripts/notify-discord.sh *), Read, Grep, Glob
 ---
 
 # Ship
@@ -12,7 +12,7 @@ Context (gathered for you):
 - Diff stat vs base: !`git diff --stat $(git merge-base HEAD origin/HEAD)..HEAD`
 
 Run the ship pipeline for the current branch. Treat $ARGUMENTS as an optional one-line summary of
-the change. The chain is sequential and you (the central thread) own it — the specialists have no
+the change, minus an optional `--notify=slack|discord|none` flag (see step 6). The chain is sequential and you (the central thread) own it — the specialists have no
 `Agent` tool, so every stage runs from here.
 
 1. **Preflight.** Run the verify commands from CLAUDE.md — the C# format check, the `.meta` check on
@@ -44,8 +44,21 @@ the change. The chain is sequential and you (the central thread) own it — the 
    recommendation and wait for my explicit "yes". `gh pr merge` is not pre-authorized and will
    prompt — only proceed once I approve.
 
-6. **Notify.** After each transition (PR opened, review posted, merged), delegate to the
-   `slack-notifier` sub-agent to post to the team thread. Keep every update in the same thread.
+6. **Notify.** Pick the channel once, at the start, in this order: the `--notify=` flag in
+   $ARGUMENTS; else the `Notifications:` line in CLAUDE.md's Ship workflow section (`slack`,
+   `discord`, or `none`); else auto-detect — Discord if `.claude/scripts/notify-discord.sh --check`
+   exits 0 (`DISCORD_WEBHOOK_URL` is set), Slack if Slack MCP tools are available, otherwise none.
+   Say which channel you picked before step 2.
+   - **Slack:** after each transition (PR opened, review posted, merged), delegate to the
+     `slack-notifier` sub-agent. Keep every update in the same thread.
+   - **Discord:** right after the PR is created, run
+     `.claude/scripts/notify-discord.sh "<pr url>" "<pr title>" "<one-line summary>" "<base>"`. That is
+     the only Discord post: a webhook can't start a thread in a text channel, so reviews and merges are followed on
+     GitHub. Skip it if the PR already existed when this run started. Never print or echo the
+     webhook URL.
+   - **none:** skip notifications.
+   If the chosen channel isn't set up (exit 3, or no Slack tools) or a post fails, say so in one line
+   and continue. A missed notification never blocks shipping.
 
 Never work around a gate, a red preflight, a failing check, or a blocking review to ship faster. If
 something blocks, stop and tell me with the reason.

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# sync-templates.sh — keep skill assets identical to the canonical files in templates/ and agents/.
+# sync-templates.sh — keep skill assets identical to the canonical files in templates/, agents/,
+# and the scripts a skill hands to projects.
 # Part of claude-unity-devkit.
 #
 # templates/ and agents/ are the single source of truth: commands and scripts copy from templates/,
@@ -45,6 +46,7 @@ MAP=(
   "agents/performance-reviewer.md:skills/ship-workflow/assets/performance-reviewer.md"
   "agents/gameplay-reviewer.md:skills/ship-workflow/assets/gameplay-reviewer.md"
   "agents/ci-reviewer.md:skills/ship-workflow/assets/ci-reviewer.md"
+  "scripts/notify-discord.sh:skills/ship-workflow/assets/notify-discord.sh"
 )
 
 drift=0

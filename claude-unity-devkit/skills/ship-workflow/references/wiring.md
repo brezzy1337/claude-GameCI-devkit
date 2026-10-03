@@ -1,12 +1,15 @@
 # Wiring reference
 
 Detail for assembling the ship workflow. Read this when generating the slash command, the hook,
-or the Slack glue. Verify command syntax against current `gh`, Claude Code, and Slack docs.
+or the Slack/Discord glue. Verify command syntax against current `gh`, Claude Code, Slack, and
+Discord docs.
 
 ## Contents
 - gh CLI patterns (default driver)
 - Making the gates real
+- Choosing the notification channel
 - Slack: agent path (default) vs webhook hook (backstop)
+- Discord: webhook script
 - Where state lives
 - Slash-command frontmatter recap
 - GitHub plugin / MCP alternative
@@ -44,6 +47,18 @@ Two gates: open and merge. Enforce them with permissions, not just instructions.
 - **Branch protection** on the base branch (required GameCI checks, required review) is the
   server-side backstop: even a mistaken merge attempt fails while checks are red.
 
+## Choosing the notification channel
+
+`/ship` resolves the channel once per run, first match wins:
+1. `--notify=slack|discord|none` in the command arguments (a one-off override);
+2. the `Notifications: slack | discord | none` line in CLAUDE.md's Ship workflow section (the team
+   setting);
+3. auto-detect: Discord if `notify-discord.sh --check` exits 0 (`DISCORD_WEBHOOK_URL` is set), Slack
+   if Slack MCP tools are available in the session, otherwise none.
+
+It states the choice before opening the PR. An unconfigured channel or a failed post is reported in
+one line and never blocks shipping.
+
 ## Slack: agent path vs webhook hook
 
 **Default — agent path (MCP).** The command invokes `slack-notifier` at each transition; the agent
@@ -72,13 +87,36 @@ for a project agent, `claude-unity-devkit:security-reviewer` for the plugin's (t
 covers both). Use the backstop only when guaranteed firing matters; otherwise the agent path alone
 is enough.
 
+## Discord: webhook script
+
+Discord needs no MCP server: a channel webhook (Channel → Edit → Integrations → Webhooks → New
+Webhook → Copy URL) is enough. The plugin ships `scripts/notify-discord.sh` (copy in
+`assets/notify-discord.sh`):
+
+- `notify-discord.sh --check` — exit 0 if `DISCORD_WEBHOOK_URL` is set, 3 if not. Prints no URL.
+- `notify-discord.sh <pr-url> <pr-title> [summary] [base]` — posts one embed ("PR opened: …", the
+  summary, branch → base, author) and links to the PR. `base` defaults to the PR's base branch via
+  `gh pr view`. Uses `?wait=true` so a rejected post is an HTTP error, and masks any webhook URL in
+  the error it prints. `allowed_mentions` is empty, so a PR title can't ping `@everyone`. Needs `jq`.
+
+`/ship` posts **once**, when the PR opens, and not again on a re-run for an existing PR. A webhook
+can't start a thread in a normal text channel — it can post into an existing thread (`thread_id`)
+or create one only in a forum channel (`thread_name`) — so per-stage posts would scatter; reviews
+and merges are followed on GitHub. Pre-authorize the script
+in the command's `allowed-tools` (`Bash(*/scripts/notify-discord.sh*)` for the plugin,
+`Bash(.claude/scripts/notify-discord.sh *)` for a project copy) — it isn't a gate.
+
+The URL is the credential: anyone holding it can post as the webhook. Keep it in
+`DISCORD_WEBHOOK_URL` (a Codespaces secret, or a local env var each teammate sets), never in a
+committed file, and never echo it. If it leaks, delete the webhook in Discord and create a new one.
+
 ## Where state lives
 
 Don't keep pipeline state in the session — it dies with the context.
 - **PR body** — the change summary, Editor follow-ups, and the consolidated review. Re-runnable:
   read it back with `gh pr view --json body`.
 - **PR checks** — the GameCI results, read back with `gh pr checks`.
-- **Slack thread** — running status. Store the thread `ts` in the PR body (a trailing
+- **Slack thread** (Slack teams) — running status. Store the thread `ts` in the PR body (a trailing
   `<!-- slack-thread: <ts> -->` line works) so a later run replies in the same thread instead of
   opening a new one.
 

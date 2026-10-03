@@ -2,16 +2,17 @@
 name: ship-workflow
 description: >-
   Author a Claude Code "ship" pipeline for a Unity / C# repo that opens a pull request, runs a
-  multi-lens code review via sub-agents, waits on the GameCI checks, and posts Slack notifications —
-  built on top of the subagent-orchestration baseline. Use this skill whenever the user wants to set
-  up, configure, or improve an automated PR, review, and notify workflow for a Claude Code project,
-  such as a /ship (or /open-pr) slash command, specialist agents like pr-author, a review panel
-  (factual, architecture, security, consistency, redundancy, plus Unity performance, gameplay, and CI
-  lenses), slack-notifier, approval gates before opening or merging, Slack updates on PR events, or
-  wiring these together with hooks and the gh CLI. Trigger it even when the user only describes the
-  goal ("get my changes reviewed and tell the team on Slack", "automate opening PRs with a review
-  step", "set up a ship command") without naming the pieces. For the routing rules, invocation
-  protocol, and dependency safety this depends on, see the subagent-orchestration skill.
+  multi-lens code review via sub-agents, waits on the GameCI checks, and notifies the team on Slack or
+  Discord — built on top of the subagent-orchestration baseline. Use this skill whenever the user
+  wants to set up, configure, or improve an automated PR, review, and notify workflow for a Claude
+  Code project, such as a /ship (or /open-pr) slash command, specialist agents like pr-author, a
+  review panel (factual, architecture, security, consistency, redundancy, plus Unity performance,
+  gameplay, and CI lenses), slack-notifier, approval gates before opening or merging, Slack or Discord
+  updates on PR events (including choosing between them), or wiring these together with hooks and the
+  gh CLI. Trigger it even when the user only describes the goal ("get my changes reviewed and tell the
+  team on Slack/Discord", "automate opening PRs with a review step", "set up a ship command") without
+  naming the pieces. For the routing rules, invocation protocol, and dependency safety this depends
+  on, see the subagent-orchestration skill.
 ---
 
 # Ship workflow
@@ -20,16 +21,18 @@ description: >-
 
 This is the `subagent-orchestration` chain applied to shipping a change. The pipeline —
 preflight → open PR → review → CI checks → merge → notify — is just that skill's "Implement → Test →
-Review" chain extended with PR creation at the front and Slack notification at the back. The
+Review" chain extended with PR creation at the front and a team notification (Slack or Discord)
+at the back. The
 central thread owns it (specialists get no `Agent` tool): it runs each stage and hands output to the
 next. So author this on top of the baseline, don't restate the baseline's routing or invocation
 rules here.
 
 Design for two audiences. **Intuitive for the user:** one handle (`/ship`) starts the chain, and
-two human gates (open, merge) keep them in control while Slack gives visibility. **Effective for
+two human gates (open, merge) keep them in control while Slack or Discord gives visibility. **Effective for
 the model:** each stage is a focused agent with least-privilege tools and a clear input/output
 contract, the glue is deterministic (permission gates and hooks, not remembered prose), and state
-lives in durable places (the PR body and one Slack thread) so an interrupted run can resume.
+lives in durable places (the PR body, plus one Slack thread when Slack is the channel) so an
+interrupted run can resume.
 
 The Unity twist: most developers can't run the Editor's tests in the loop, so the **GameCI Test
 workflow on the PR is the authoritative test run** (see `gameci-pipeline`), and `/ship` treats a red
@@ -46,14 +49,17 @@ customize them.
    `architecture-reviewer`, `security-reviewer`, `consistency-reviewer`, `redundancy-checker`),
    three Unity lenses dispatched by what the diff touches (`performance-reviewer`,
    `gameplay-reviewer`, `ci-reviewer`), plus the pipeline mechanics `pr-author` and
-   `slack-notifier`. Reuse the baseline's `dependency-auditor` in preflight rather than duplicating it.
+   `slack-notifier` (Slack teams). Reuse the baseline's `dependency-auditor` in preflight rather
+   than duplicating it.
 3. **A CLAUDE.md "Ship workflow" section** describing the chain, the gates, and where state lives.
-4. **Optional** — a `SubagentStop` Slack hook as a notification backstop (see Step 5).
+4. **For Discord teams** — `.claude/scripts/notify-discord.sh` (`assets/notify-discord.sh`), the
+   webhook poster `/ship` runs when the PR opens.
+5. **Optional** — a `SubagentStop` Slack hook as a notification backstop (see Step 5).
 
 Templates for all of these are in `assets/`. The agent templates are byte-identical copies of the
 plugin's live agents (kept in sync by `scripts/sync-templates.sh`); in a project-local copy, replace
 `${CLAUDE_PLUGIN_ROOT}/...` references with paths that exist in the repo. The wiring detail (gh CLI,
-gates, Slack paths, state) is in `references/wiring.md`.
+gates, Slack and Discord paths, state) is in `references/wiring.md`.
 
 ## Step 1 — Inspect first
 
@@ -69,8 +75,11 @@ Same rule as the baseline: tailor to the real repo. Before generating, learn:
   results`, `playmode test results` in the devkit templates)? The merge gate waits on them.
 - **Base branch.** What do PRs target (`main`, `develop`)? The command needs it for the diff and
   for `gh pr create --base`.
-- **Slack destination.** Which channel/thread should updates go to, and is a Slack MCP server
-  connected? If not, note that the notifier (or the webhook backstop) needs setup.
+- **Notification channel.** Slack, Discord, or none? Ask if it isn't obvious. For Slack: which
+  channel, and is a Slack MCP server connected? For Discord: is a channel webhook available as
+  `DISCORD_WEBHOOK_URL` (a Codespaces secret or local env var)? Record the answer as the
+  `Notifications:` line in the CLAUDE.md section (Step 4); if it isn't set up yet, say what's
+  missing.
 - **Existing agents.** If the baseline is already installed, reuse `dependency-auditor` in
   preflight; the review panel is defined here. Don't duplicate a `name` that already exists in
   the same scope — duplicates are silently dropped, and a project agent overrides a plugin agent.
@@ -180,12 +189,24 @@ not an afterthought — it's what makes the gate worth stopping at.
 
 Use `assets/ship-workflow-claude-md.md`. It records the chain, marks both gates as
 approval-required, names the review fan-out as parallel-then-consolidated, makes the GameCI checks
-part of the merge gate, and states where state lives (PR body + one Slack thread) so a re-run resumes
-instead of restarting. It also reminds the central thread that gates are not optional.
+part of the merge gate, records the notification channel (`Notifications: slack | discord | none`),
+and states where state lives (PR body, plus the Slack thread for Slack) so a re-run resumes instead of
+restarting. It also reminds the central thread that gates are not optional.
 
 ## Step 5 — Wire the notifications
 
-Default to the **agent path**: the command's last step in each transition invokes `slack-notifier`,
+`/ship` picks the channel from a `--notify=slack|discord|none` flag, else the CLAUDE.md
+`Notifications:` line, else auto-detects (Discord if `DISCORD_WEBHOOK_URL` is set, Slack if Slack MCP
+tools are connected). Wire the one the team uses.
+
+**Discord** — copy `assets/notify-discord.sh` to `.claude/scripts/` and `chmod +x` it. `/ship` runs it
+once, right after the PR opens; the embed links to GitHub, where people review and merge. One post,
+not one per transition: a webhook can't start a thread in a normal text channel (only in forum channels), so per-stage
+posts would scatter across the channel. The webhook URL is a secret (anyone holding it can post):
+keep it in `DISCORD_WEBHOOK_URL`, never in the repo, and never print it. A missing webhook (exit 3)
+only skips the post.
+
+**Slack** — default to the **agent path**: the command's last step in each transition invokes `slack-notifier`,
 which posts via a Slack MCP server and keeps everything in one thread (it returns the thread
 timestamp; store it in the PR body so later updates reply in-thread). This is reliable because it's
 a defined command step, not an ad-hoc afterthought.
@@ -203,12 +224,14 @@ plugin's is `claude-unity-devkit:security-reviewer`; the asset's regex matcher c
   `gh pr merge` are absent from the command's `allowed-tools`, and there is no blanket `Bash(gh *)`.
 - **Least privilege** — `slack-notifier` can't edit code or delegate; every reviewer is read-only with
   no `Write`/`Edit`/`Agent`.
+- **One notification channel** — the CLAUDE.md `Notifications:` line names it; for Discord the
+  webhook comes from `DISCORD_WEBHOOK_URL` only, never a committed file.
 - **Review lenses stay distinct** — no two panel agents cover the same dimension (the "overlapping
   roles" mistake); each has a dimension the others don't, stated in its prompt.
 - **Valid frontmatter** — command fields (`description`, `argument-hint`, `allowed-tools`) and
   agent fields (`name`, `description`) are present and correct.
-- **Real values** — the verify commands, CI check names, base branch, and Slack channel are the
-  repo's actual ones, not placeholders left in.
+- **Real values** — the verify commands, CI check names, base branch, and Slack channel (or Discord
+  webhook variable) are the repo's actual ones, not placeholders left in.
 - **One level of delegation** — the chain runs from the central thread; agents don't call agents.
 
 ## Grounding notes
