@@ -201,8 +201,11 @@ tools are connected). Wire the one the team uses.
 
 **Discord** — copy `assets/notify-discord.sh` to `.claude/scripts/` and `chmod +x` it. `/ship` runs it
 once, right after the PR opens; the embed links to GitHub, where people review and merge. One post,
-not one per transition: a webhook can't start a thread in a normal text channel (only in forum channels), so per-stage
-posts would scatter across the channel. The webhook URL is a secret (anyone holding it can post):
+not one per transition: a webhook can't start a thread in a normal text channel (only in forum
+channels), so per-stage posts would scatter across the channel. Its only argument is the PR URL —
+the title and branches come from GitHub and the summary from stdin (a quoted heredoc) — because PR
+text pasted into a pre-authorized, double-quoted command is a shell-injection path. Keep that
+calling convention in any project copy of the command. The webhook URL is a secret (anyone holding it can post):
 keep it in `DISCORD_WEBHOOK_URL`, never in the repo, and never print it. A missing webhook (exit 3)
 only skips the post.
 
@@ -236,9 +239,11 @@ plugin's is `claude-unity-devkit:security-reviewer`; the asset's regex matcher c
 
 ## Grounding notes
 
-- The gates rely on the permission prompt, so they only hold in interactive use (or with a
-  matching `permissions` policy). In headless/auto modes, add explicit `permissions.ask` /
-  `deny` rules for the push/create/merge commands, or the gate won't prompt.
+- The gates rely on the permission prompt. For auto mode, add `permissions.ask` rules for the
+  push/create/merge commands *and* their other routes (flag-first forms, `gh api`,
+  `gh pr close/review/ready`) — prefix rules are easy to sidestep otherwise; see
+  `references/wiring.md`. In bypass mode (`--dangerously-skip-permissions`) `ask` doesn't prompt,
+  so `deny` those commands or don't run `/ship` that way.
 - Notifications via the agent are model-driven; the webhook+hook backstop is the deterministic
   layer. Pick based on how much the user needs guaranteed firing.
 - A green GameCI run proves the tests pass, not that the change plays well — the gameplay lens and

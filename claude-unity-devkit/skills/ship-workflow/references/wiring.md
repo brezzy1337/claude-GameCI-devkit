@@ -38,12 +38,24 @@ Two gates: open and merge. Enforce them with permissions, not just instructions.
   `allowed-tools`. Claude Code then asks for permission when it reaches them — that prompt is the
   human gate. Everything read-only (status, diff, `gh pr view`, `gh pr checks`) is pre-authorized so
   the pipeline flows up to each gate without nagging.
-- **Headless / auto modes** (`--dangerously-skip-permissions`, CI): no prompt exists, so add
-  explicit rules in `.claude/settings.json`:
+- **Auto mode:** commands outside `allowed-tools` may run without a prompt, so add explicit `ask`
+  rules in `.claude/settings.json`. Rules match command prefixes, so cover the flag-first forms and
+  the other routes to the same effect (`gh api` can merge or comment; `gh pr close/review/ready`):
   ```json
-  { "permissions": { "ask": ["Bash(gh pr create *)", "Bash(gh pr merge *)", "Bash(git push *)"] } }
+  { "permissions": {
+      "ask": ["Bash(git push)", "Bash(git push *)", "Bash(git * push *)",
+              "Bash(gh pr create *)", "Bash(gh pr comment *)", "Bash(gh pr edit *)",
+              "Bash(gh pr merge *)", "Bash(gh pr close *)", "Bash(gh pr review *)",
+              "Bash(gh pr ready *)", "Bash(gh * pr merge *)", "Bash(gh api *)", "Bash(gh * api *)"],
+      "deny": ["Bash(git push --force*)", "Bash(git push -f*)", "Bash(git push * --force*)",
+               "Bash(git push * -f*)", "Bash(git push * +*)",
+               "Bash(env)", "Bash(printenv)", "Bash(printenv *)"] } }
   ```
-  Or `deny` them outright in fully automated runs so a human must finish the step by hand.
+  `deny` on `env`/`printenv` keeps a prompt-injected run from dumping `DISCORD_WEBHOOK_URL` or other
+  secrets from the environment.
+- **Bypass mode** (`--dangerously-skip-permissions`): `ask` rules don't prompt there. Don't run
+  `/ship` that way, or `deny` the push/create/merge commands so a human finishes those steps by
+  hand. Say this plainly in the CLAUDE.md section rather than claiming the gates always hold.
 - **Branch protection** on the base branch (required GameCI checks, required review) is the
   server-side backstop: even a mistaken merge attempt fails while checks are red.
 
@@ -94,17 +106,27 @@ Webhook → Copy URL) is enough. The plugin ships `scripts/notify-discord.sh` (c
 `assets/notify-discord.sh`):
 
 - `notify-discord.sh --check` — exit 0 if `DISCORD_WEBHOOK_URL` is set, 3 if not. Prints no URL.
-- `notify-discord.sh <pr-url> <pr-title> [summary] [base]` — posts one embed ("PR opened: …", the
-  summary, branch → base, author) and links to the PR. `base` defaults to the PR's base branch via
-  `gh pr view`. Uses `?wait=true` so a rejected post is an HTTP error, and masks any webhook URL in
-  the error it prints. `allowed_mentions` is empty, so a PR title can't ping `@everyone`. Needs `jq`.
+- `notify-discord.sh <pr-url> <<'EOF'` … `EOF` — posts one embed ("PR opened: …", the summary,
+  branch → base, author) linking to the PR. The **only argument is the PR URL**, validated against
+  `https://github.com/<owner>/<repo>/pull/<n>`; the title, branches, and author come from
+  `gh pr view`, and the optional one-line summary comes on **stdin**. This keeps PR text, which
+  `pr-author` drafts from a diff anyone can influence, away from the shell: a title containing
+  `$(…)` pasted into a double-quoted, pre-authorized command would otherwise execute. Tell the
+  model to use a quoted heredoc (`<<'EOF'`) for the summary, never double quotes.
+- The webhook reaches curl through `-K` on a file descriptor, not argv, so it doesn't show in `ps`.
+  `?wait=true` turns a rejected post into an HTTP error; the error output masks the exact webhook
+  value and any Discord webhook URL. `allowed_mentions` is empty, so a PR title can't ping
+  `@everyone`. Connect and total timeouts keep a hung request from stalling `/ship`. Needs `gh` and
+  `jq`.
 
 `/ship` posts **once**, when the PR opens, and not again on a re-run for an existing PR. A webhook
 can't start a thread in a normal text channel — it can post into an existing thread (`thread_id`)
 or create one only in a forum channel (`thread_name`) — so per-stage posts would scatter; reviews
-and merges are followed on GitHub. Pre-authorize the script
-in the command's `allowed-tools` (`Bash(*/scripts/notify-discord.sh*)` for the plugin,
-`Bash(.claude/scripts/notify-discord.sh *)` for a project copy) — it isn't a gate.
+and merges are followed on GitHub. A resumed run on an existing PR offers to send a post the first
+run skipped. Pre-authorize only the two script forms in the command's `allowed-tools` — it isn't a
+gate: `Bash(*/scripts/notify-discord.sh --check)` and
+`Bash(*/scripts/notify-discord.sh https://github.com/*)` for the plugin, or the same with
+`.claude/scripts/` for a project copy.
 
 The URL is the credential: anyone holding it can post as the webhook. Keep it in
 `DISCORD_WEBHOOK_URL` (a Codespaces secret, or a local env var each teammate sets), never in a
