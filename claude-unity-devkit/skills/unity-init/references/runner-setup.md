@@ -78,8 +78,10 @@ Setup on each PC:
 
 ## Maintenance
 
-- Bumping the CLI pin in the workflow reinstalls it on the next run; bumping the Editor
-  (`ProjectVersion.txt`) installs the new Editor on the next run — prune old ones with
+- Bumping the CLI pin or the Editor (`ProjectVersion.txt`) does **not** update a self-hosted
+  runner: the workflow only installs on GitHub-hosted runners. On each runner the next job fails
+  with the fix command — run it there (`unity self-update --target <pin> --yes`, or
+  `unity install <editor> -m <modules> --accept-eula --yes`), then prune old Editors with
   `unity editors prune`.
 - Personal licenses need periodic re-activation; when `doctor --ci` starts failing on license,
   repeat step 4.
